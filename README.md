@@ -4,12 +4,16 @@ Real-time player count monitor for DayZ servers using an ESP32-S3 with a 7" touc
 
 ![ESP32-S3 DayZ Tracker](https://img.shields.io/badge/ESP32--S3-DayZ%20Tracker-blue)
 ![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.5-green)
+![LVGL](https://img.shields.io/badge/LVGL-v9.2-orange)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 ## Features
 
+- **Smooth anti-aliased fonts** using LVGL graphics library
 - Real-time player count display (e.g., 42/60)
+- Modern dark theme with card-based UI
 - Color-coded progress bar (green/yellow/red based on capacity)
+- Animated progress bar transitions
 - Server online/offline status indicator
 - Auto-refresh every 30 seconds
 - 800x480 full-color display
@@ -25,18 +29,20 @@ Real-time player count monitor for DayZ servers using an ESP32-S3 with a 7" touc
 ## Display Preview
 
 ```
-+---------------------------------------+
-|           DAYZ SERVER                 |
-|         3833 EUROPE-DE                |
-|                                       |
-|    PLAYERS       42/60                |
-|                                       |
-|    [================------]           |
-|                                       |
-|    ONLINE        14:32:15             |
-|    5.62.99.20:11400                   |
-+---------------------------------------+
++------------------------------------------+
+|              DAYZ SERVER                 |
+|           3833 | EUROPE - DE             |
+|                                          |
+|     PLAYERS        42        /60         |
+|                                          |
+|     [====================--------]       |
+|                                          |
+|  ONLINE      Updated: 14:32:15           |
+|                          5.62.99.20:11400|
++------------------------------------------+
 ```
+
+Modern dark theme with smooth Montserrat fonts and rounded UI elements.
 
 ## Quick Start
 
@@ -94,22 +100,31 @@ idf.py -p /dev/ttyUSB0 flash
 
 ```
 DayZ_servertracker/
-+-- main/
-|   +-- main.c              # Main application code
-|   +-- CMakeLists.txt      # Component build config
-+-- build.ps1               # Windows build script
-+-- flash.ps1               # Windows flash script
-+-- checkports.ps1          # COM port detection helper
-+-- CMakeLists.txt          # Project build config
-+-- sdkconfig.defaults      # ESP-IDF configuration
-+-- HARDWARE_MANUAL.md      # Detailed hardware reference
+├── main/
+│   ├── main.c              # Main application code
+│   ├── idf_component.yml   # LVGL dependencies
+│   └── CMakeLists.txt      # Component build config
+├── build.ps1               # Windows build script
+├── flash.ps1               # Windows flash script
+├── checkports.ps1          # COM port detection helper
+├── partitions.csv          # Custom partition table (3MB app)
+├── CMakeLists.txt          # Project build config
+├── sdkconfig.defaults      # ESP-IDF configuration
+└── HARDWARE_MANUAL.md      # Detailed hardware reference
 ```
+
+## Dependencies
+
+Managed automatically via ESP-IDF component manager:
+
+- **LVGL v9.2** - Graphics library with anti-aliased font rendering
+- **esp_lvgl_port v2.4** - ESP-IDF LVGL integration for RGB displays
 
 ## Configuration
 
 ### sdkconfig.defaults
 
-Key settings for stable display operation:
+Key settings for stable display and smooth fonts:
 
 ```ini
 # PSRAM Configuration
@@ -122,6 +137,13 @@ CONFIG_ESP32S3_DATA_CACHE_64KB=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
 
+# LVGL Fonts (Montserrat with anti-aliasing)
+CONFIG_LV_FONT_MONTSERRAT_18=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_48=y
+
 # SSL for HTTPS API calls
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 ```
@@ -131,10 +153,11 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 | Issue | Solution |
 |-------|----------|
 | Black screen | Verify GPIO pins match your board, check PSRAM is enabled |
-| Display flickering | Bounce buffers are configured in `sdkconfig.defaults` |
+| Display flickering | Ensure bounce buffers are enabled (see HARDWARE_MANUAL.md) |
 | WiFi not connecting | Ensure 2.4GHz network (ESP32 doesn't support 5GHz) |
 | Player count shows "---" | Check internet connection or server might be offline |
 | Wrong COM port | Run `checkports.ps1` to find the correct port |
+| Build fails - partition too small | Custom partition table included (3MB app partition) |
 
 ## API
 
@@ -146,6 +169,7 @@ See [HARDWARE_MANUAL.md](HARDWARE_MANUAL.md) for detailed hardware configuration
 - GPIO pin mapping
 - Display timing parameters
 - PSRAM configuration
+- Bounce buffer setup
 - Alternative timing values
 
 ## License
@@ -154,6 +178,7 @@ MIT License - feel free to use and modify for your own projects.
 
 ## Credits
 
+- [LVGL](https://lvgl.io/) for the graphics library
 - [Waveshare](https://www.waveshare.com/) for the ESP32-S3-Touch-LCD-7
 - [BattleMetrics](https://www.battlemetrics.com/) for the server API
 - [Espressif](https://www.espressif.com/) for ESP-IDF
