@@ -1,0 +1,33 @@
+# ESP-IDF Build artifacts
+build/
+sdkconfig.old
+
+# Claude Code settings
+.claude/
+
+# IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled files
+*.o
+*.a
+*.out
+*.elf
+*.bin
+*.map
+
+# Log files
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
