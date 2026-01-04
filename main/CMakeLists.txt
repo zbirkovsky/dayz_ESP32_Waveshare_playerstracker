@@ -1,2 +1,20 @@
-idf_component_register(SRCS "main.c"
-                       INCLUDE_DIRS ".")
+idf_component_register(
+    SRCS
+        "main.c"
+        "app_state.c"
+        "events.c"
+        "drivers/buzzer.c"
+        "drivers/sd_card.c"
+        "drivers/display.c"
+        "services/wifi_manager.c"
+        "services/battlemetrics.c"
+        "services/settings_store.c"
+        "services/history_store.c"
+        "ui/ui_styles.c"
+        "ui/ui_widgets.c"
+    INCLUDE_DIRS
+        "."
+        "drivers"
+        "services"
+        "ui"
+)

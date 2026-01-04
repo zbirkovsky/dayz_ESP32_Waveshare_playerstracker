@@ -133,16 +133,42 @@ On first boot:
 ```
 DayZ_servertracker/
 ├── main/
-│   ├── main.c              # Main application code
-│   ├── idf_component.yml   # LVGL dependencies
-│   └── CMakeLists.txt      # Component build config
-├── build.ps1               # Windows build script
-├── flash.ps1               # Windows flash script
-├── checkports.ps1          # COM port detection helper
-├── partitions.csv          # Custom partition table (3MB app)
-├── CMakeLists.txt          # Project build config
-└── sdkconfig.defaults      # ESP-IDF configuration
+│   ├── main.c                    # Application entry point & UI screens
+│   ├── config.h                  # Constants, pins, and configuration
+│   ├── app_state.h/.c            # Centralized state management (thread-safe)
+│   ├── events.h/.c               # Event queue for UI/logic decoupling
+│   ├── drivers/
+│   │   ├── buzzer.h/.c           # Buzzer hardware driver
+│   │   ├── sd_card.h/.c          # SD card & CH422G IO expander
+│   │   └── display.h/.c          # LCD + Touch + LVGL initialization
+│   ├── services/
+│   │   ├── wifi_manager.h/.c     # WiFi connection & SNTP sync
+│   │   ├── battlemetrics.h/.c    # BattleMetrics API client (cJSON)
+│   │   ├── settings_store.h/.c   # NVS settings persistence
+│   │   └── history_store.h/.c    # Player history storage
+│   ├── ui/
+│   │   ├── ui_styles.h/.c        # Color definitions & shared styles
+│   │   └── ui_widgets.h/.c       # Reusable widget factories
+│   ├── idf_component.yml         # LVGL dependencies
+│   └── CMakeLists.txt            # Component build config
+├── build.ps1                     # Windows build script
+├── flash.ps1                     # Windows flash script
+├── checkports.ps1                # COM port detection helper
+├── partitions.csv                # Custom partition table (3MB app)
+├── CMakeLists.txt                # Project build config
+└── sdkconfig.defaults            # ESP-IDF configuration
 ```
+
+### Architecture Overview
+
+The codebase follows a **modular layered architecture**:
+
+- **Drivers Layer**: Hardware abstraction (buzzer, SD card, display)
+- **Services Layer**: Business logic (API client, WiFi, storage)
+- **UI Layer**: Presentation (styles, widget factories, screens)
+- **Core**: State management and event system
+
+All state is managed through `app_state` with mutex protection for thread safety. UI callbacks post events to a queue, which are processed in the main loop, ensuring clean separation between UI and business logic.
 
 ## Settings Reference
 
@@ -162,6 +188,7 @@ Managed automatically via ESP-IDF component manager:
 - **LVGL v9.2** - Graphics library with anti-aliased font rendering
 - **esp_lvgl_port v2.4** - ESP-IDF LVGL integration for RGB displays
 - **esp_lcd_touch_gt911** - Touch controller driver
+- **cJSON** - JSON parsing library (built into ESP-IDF)
 
 ## Troubleshooting
 
