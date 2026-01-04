@@ -35,6 +35,8 @@ void app_state_init(void) {
     g_state.ui.current_history_range = HISTORY_RANGE_1H;
     g_state.ui.alert_active = false;
     g_state.ui.alert_start_time = 0;
+    g_state.ui.screensaver_active = false;
+    g_state.ui.last_activity_time = 0;  // Will be set when LVGL starts
 
     // Initialize history - allocate in PSRAM
     g_state.history.entries = heap_caps_calloc(MAX_HISTORY_ENTRIES,
@@ -57,6 +59,7 @@ void app_state_init(void) {
 
     // Initialize settings defaults
     g_state.settings.refresh_interval_sec = DEFAULT_REFRESH_INTERVAL_SEC;
+    g_state.settings.screensaver_timeout_sec = DEFAULT_SCREENSAVER_TIMEOUT_SEC;
     g_state.settings.first_boot = true;
     g_state.settings.server_count = 0;
     g_state.settings.active_server_index = 0;

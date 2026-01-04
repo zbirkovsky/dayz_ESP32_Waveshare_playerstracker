@@ -61,9 +61,12 @@
 #define SD_CLK              GPIO_NUM_12
 // SD_CS is controlled via CH422G IO expander EXIO4
 
-// CH422G IO Expander (for SD_CS control)
+// CH422G IO Expander (controls SD_CS and GT911 reset)
+// CH422G address range is 0x20-0x27, device specific
 #define CH422G_I2C_ADDR     0x24
 #define CH422G_REG_OUT      0x01
+#define CH422G_EXIO1_BIT    (1 << 1)    // GT911 touch reset pin (TP_RST)
+#define CH422G_EXIO2_BIT    (1 << 2)    // LCD backlight control
 #define CH422G_EXIO4_BIT    (1 << 4)    // SD_CS pin
 
 // ============== BUZZER CONFIGURATION ==============
@@ -104,6 +107,7 @@
 #define DEFAULT_ALERT_THRESHOLD         50
 #define MIN_REFRESH_INTERVAL_SEC        10
 #define MAX_REFRESH_INTERVAL_SEC        300
+#define DEFAULT_SCREENSAVER_TIMEOUT_SEC 300     // 5 minutes (0 = disabled)
 
 // Default server for first boot
 #define DEFAULT_SERVER_ID       "29986583"

@@ -13,18 +13,34 @@
 
 static const char *TAG = "sd_card";
 
+// CH422G uses register address AS the I2C device address!
+// Mode register: 0x24, Output register for pins 0-7: 0x38
+#define CH422G_MODE_ADDR    0x24
+#define CH422G_OUTPUT_ADDR  0x38
+#define CH422G_MODE_OUTPUT  0x01    // Enable output mode for pins 0-7
+
 static sdmmc_card_t *sd_card = NULL;
 static bool sd_mounted = false;
 static uint8_t ch422g_output_state = 0xFF;  // All outputs high by default (CS inactive)
+
+static esp_err_t ch422g_write_state(uint8_t state) {
+    // Step 1: Configure CH422G mode register (address 0x24)
+    uint8_t mode = CH422G_MODE_OUTPUT;
+    esp_err_t ret = i2c_master_write_to_device(TOUCH_I2C_NUM, CH422G_MODE_ADDR, &mode, 1, pdMS_TO_TICKS(100));
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    // Step 2: Write output state to output register (address 0x38)
+    return i2c_master_write_to_device(TOUCH_I2C_NUM, CH422G_OUTPUT_ADDR, &state, 1, pdMS_TO_TICKS(100));
+}
 
 esp_err_t sd_card_init_io_expander(void) {
     // CH422G is on the same I2C bus as GT911 touch (already initialized)
     // Set all outputs high (SD_CS inactive)
     ch422g_output_state = 0xFF;
 
-    uint8_t data[2] = {CH422G_REG_OUT, ch422g_output_state};
-    esp_err_t ret = i2c_master_write_to_device(TOUCH_I2C_NUM, CH422G_I2C_ADDR,
-                                                data, 2, pdMS_TO_TICKS(100));
+    esp_err_t ret = ch422g_write_state(ch422g_output_state);
 
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "CH422G IO expander initialized");
@@ -42,9 +58,7 @@ void sd_card_set_cs(bool active) {
         ch422g_output_state |= CH422G_EXIO4_BIT;   // High = inactive
     }
 
-    uint8_t data[2] = {CH422G_REG_OUT, ch422g_output_state};
-    i2c_master_write_to_device(TOUCH_I2C_NUM, CH422G_I2C_ADDR,
-                               data, 2, pdMS_TO_TICKS(100));
+    ch422g_write_state(ch422g_output_state);
 }
 
 esp_err_t sd_card_init(void) {

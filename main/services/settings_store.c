@@ -65,6 +65,9 @@ esp_err_t settings_load(void) {
         state->settings.refresh_interval_sec = MAX_REFRESH_INTERVAL_SEC;
     }
 
+    // Load screensaver timeout
+    nvs_get_u16(nvs, "screen_off", &state->settings.screensaver_timeout_sec);
+
     // Load server count and active index
     uint8_t count = 0;
     nvs_get_u8(nvs, "server_count", &count);
@@ -173,6 +176,9 @@ esp_err_t settings_save(void) {
 
     // Save refresh interval
     nvs_set_u16(nvs, "refresh_int", state->settings.refresh_interval_sec);
+
+    // Save screensaver timeout
+    nvs_set_u16(nvs, "screen_off", state->settings.screensaver_timeout_sec);
 
     // Save server count and active index
     nvs_set_u8(nvs, "server_count", state->settings.server_count);

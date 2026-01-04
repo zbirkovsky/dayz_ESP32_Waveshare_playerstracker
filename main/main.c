@@ -74,6 +74,7 @@ static lv_obj_t *ta_server_id = NULL;
 static lv_obj_t *ta_server_name = NULL;
 static lv_obj_t *slider_refresh = NULL;
 static lv_obj_t *lbl_refresh_val = NULL;
+static lv_obj_t *dropdown_screen_off = NULL;
 static lv_obj_t *slider_alert = NULL;
 static lv_obj_t *lbl_alert_val = NULL;
 static lv_obj_t *sw_alerts = NULL;
@@ -363,6 +364,23 @@ static void on_history_clicked(lv_event_t *e) {
     events_post_screen_change(SCREEN_HISTORY);
 }
 
+// Global touch handler for screensaver wake and activity tracking
+static void on_screen_touch(lv_event_t *e) {
+    (void)e;
+    app_state_t *state = app_state_get();
+
+    // Update last activity time
+    state->ui.last_activity_time = esp_timer_get_time() / 1000;
+
+    // Wake from screensaver if active
+    if (state->ui.screensaver_active) {
+        display_set_backlight(true);
+        state->ui.screensaver_active = false;
+        // Consume the touch event to prevent accidental button presses
+        lv_indev_wait_release(lv_indev_active());
+    }
+}
+
 static void on_back_clicked(lv_event_t *e) {
     (void)e;
     events_post_screen_change(SCREEN_MAIN);
@@ -443,6 +461,22 @@ static void on_refresh_slider_changed(lv_event_t *e) {
     }
 
     settings_save();
+}
+
+// Screen off timeout values in seconds: Off, 5m, 10m, 15m, 30m, 60m, 90m, 120m, 240m
+static const uint16_t screen_off_values[] = {0, 300, 600, 900, 1800, 3600, 5400, 7200, 14400};
+static const int screen_off_count = sizeof(screen_off_values) / sizeof(screen_off_values[0]);
+
+static void on_screen_off_changed(lv_event_t *e) {
+    lv_obj_t *dropdown = lv_event_get_target(e);
+    app_state_t *state = app_state_get();
+
+    int idx = lv_dropdown_get_selected(dropdown);
+    if (idx >= 0 && idx < screen_off_count) {
+        state->settings.screensaver_timeout_sec = screen_off_values[idx];
+        ESP_LOGI(TAG, "Screen off timeout set to %d sec", state->settings.screensaver_timeout_sec);
+        settings_save();
+    }
 }
 
 static void on_alert_slider_changed(lv_event_t *e) {
@@ -550,6 +584,9 @@ static void on_history_range_clicked(lv_event_t *e) {
 
 static void create_main_screen(void) {
     screen_main = ui_create_screen();
+
+    // Add global touch handler for screensaver activity tracking
+    lv_obj_add_event_cb(screen_main, on_screen_touch, LV_EVENT_PRESSED, NULL);
 
     // Main card
     main_card = ui_create_card(screen_main, 760, 400);
@@ -682,6 +719,7 @@ static void create_settings_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_settings = ui_create_screen();
+    lv_obj_add_event_cb(screen_settings, on_screen_touch, LV_EVENT_PRESSED, NULL);
     ui_create_back_button(screen_settings, on_back_clicked);
     ui_create_title(screen_settings, "Settings");
 
@@ -705,6 +743,30 @@ static void create_settings_screen(void) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%d sec", state->settings.refresh_interval_sec);
     lv_label_set_text(lbl_refresh_val, buf);
+
+    // Screen off timeout
+    lv_obj_t *screenoff_row = ui_create_row(cont, 660, 50);
+    lv_obj_t *lbl_screenoff = lv_label_create(screenoff_row);
+    lv_label_set_text(lbl_screenoff, "Screen Off:");
+    lv_obj_set_style_text_font(lbl_screenoff, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(lbl_screenoff, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_align(lbl_screenoff, LV_ALIGN_LEFT_MID, 0, 0);
+
+    dropdown_screen_off = lv_dropdown_create(screenoff_row);
+    lv_dropdown_set_options(dropdown_screen_off, "Off\n5 min\n10 min\n15 min\n30 min\n60 min\n90 min\n120 min\n240 min");
+    lv_obj_set_size(dropdown_screen_off, 120, 40);
+    lv_obj_align(dropdown_screen_off, LV_ALIGN_RIGHT_MID, 0, 0);
+
+    // Find current screen off index
+    int screen_off_idx = 0;
+    for (int i = 0; i < screen_off_count; i++) {
+        if (screen_off_values[i] == state->settings.screensaver_timeout_sec) {
+            screen_off_idx = i;
+            break;
+        }
+    }
+    lv_dropdown_set_selected(dropdown_screen_off, screen_off_idx);
+    lv_obj_add_event_cb(dropdown_screen_off, on_screen_off_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
     // Alerts enabled
     lv_obj_t *alerts_row = ui_create_row(cont, 660, 45);
@@ -795,6 +857,7 @@ static void create_wifi_settings_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_wifi = ui_create_screen();
+    lv_obj_add_event_cb(screen_wifi, on_screen_touch, LV_EVENT_PRESSED, NULL);
     ui_create_back_button(screen_wifi, on_back_clicked);
     ui_create_title(screen_wifi, "WiFi Settings");
 
@@ -818,6 +881,7 @@ static void create_server_settings_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_server = ui_create_screen();
+    lv_obj_add_event_cb(screen_server, on_screen_touch, LV_EVENT_PRESSED, NULL);
     ui_create_back_button(screen_server, on_back_clicked);
     ui_create_title(screen_server, "Server Settings");
 
@@ -861,6 +925,7 @@ static void create_server_settings_screen(void) {
 
 static void create_add_server_screen(void) {
     screen_add_server = ui_create_screen();
+    lv_obj_add_event_cb(screen_add_server, on_screen_touch, LV_EVENT_PRESSED, NULL);
     ui_create_back_button(screen_add_server, on_back_clicked);
     ui_create_title(screen_add_server, "Add Server");
 
@@ -883,6 +948,7 @@ static void create_history_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_history = ui_create_screen();
+    lv_obj_add_event_cb(screen_history, on_screen_touch, LV_EVENT_PRESSED, NULL);
     ui_create_back_button(screen_history, on_back_clicked);
     ui_create_title(screen_history, "Player History");
 
@@ -1260,15 +1326,7 @@ void app_main(void) {
     // Initialize history
     history_init();
 
-    // Try to load history from SD, fall back to NVS
-    if (sd_card_init() == ESP_OK) {
-        history_load_from_sd();
-    }
-    if (history_get_count() == 0) {
-        history_load_from_nvs();
-    }
-
-    // Initialize display with LVGL and touch
+    // Initialize display with LVGL and touch (includes I2C, CH422G, GT911 reset)
     lv_display_t *disp = display_init();
     if (!disp) {
         ESP_LOGE(TAG, "Display initialization failed!");
@@ -1277,6 +1335,14 @@ void app_main(void) {
 
     // Initialize UI styles
     ui_styles_init();
+
+    // Now I2C is ready, try to load history from SD
+    if (sd_card_init() == ESP_OK) {
+        history_load_from_sd();
+    }
+    if (history_get_count() == 0) {
+        history_load_from_nvs();
+    }
 
     // Create main screen
     if (lvgl_port_lock(1000)) {
@@ -1287,6 +1353,9 @@ void app_main(void) {
 
     // Get state reference
     app_state_t *state = app_state_get();
+
+    // Initialize screensaver activity time
+    state->ui.last_activity_time = esp_timer_get_time() / 1000;
 
     // First boot handling
     if (state->settings.first_boot || strlen(state->settings.wifi_ssid) == 0) {
@@ -1323,12 +1392,15 @@ void app_main(void) {
         // Process any pending events
         process_events();
 
-        // Only query if on main screen
-        if (app_state_get_current_screen() == SCREEN_MAIN) {
+        // Query server status (on main screen OR during screensaver for background data)
+        if (app_state_get_current_screen() == SCREEN_MAIN || state->ui.screensaver_active) {
             query_server_status();
             // Yield after HTTP request to let LVGL process
             vTaskDelay(pdMS_TO_TICKS(50));
-            update_ui();
+            // Only update UI if not in screensaver mode
+            if (!state->ui.screensaver_active) {
+                update_ui();
+            }
         }
 
         // Wait for refresh interval
@@ -1348,6 +1420,18 @@ void app_main(void) {
                 int64_t now = esp_timer_get_time() / 1000;
                 if (now - state->ui.alert_start_time > ALERT_AUTO_HIDE_MS) {
                     hide_alert();
+                }
+            }
+
+            // Screensaver timeout check
+            if (!state->ui.screensaver_active && state->settings.screensaver_timeout_sec > 0) {
+                int64_t now = esp_timer_get_time() / 1000;
+                int64_t elapsed_ms = now - state->ui.last_activity_time;
+                if (elapsed_ms > ((int64_t)state->settings.screensaver_timeout_sec * 1000)) {
+                    ESP_LOGI(TAG, "Screensaver activated after %lld sec of inactivity",
+                             elapsed_ms / 1000);
+                    display_set_backlight(false);
+                    state->ui.screensaver_active = true;
                 }
             }
 

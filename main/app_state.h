@@ -59,7 +59,8 @@ typedef struct {
 typedef struct {
     char wifi_ssid[33];
     char wifi_password[65];
-    uint16_t refresh_interval_sec;  // 10-300 seconds
+    uint16_t refresh_interval_sec;      // 10-300 seconds
+    uint16_t screensaver_timeout_sec;   // 0=disabled, or 300/600/900/1800/3600/5400/7200/14400
     uint8_t active_server_index;
     uint8_t server_count;
     server_config_t servers[MAX_SERVERS];
@@ -110,6 +111,8 @@ typedef struct {
     history_range_t current_history_range;
     volatile bool alert_active;
     int64_t alert_start_time;
+    bool screensaver_active;            // true = backlight off (screen saving)
+    int64_t last_activity_time;         // Timestamp of last touch event
 } ui_state_t;
 
 // History state
