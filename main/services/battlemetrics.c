@@ -10,6 +10,8 @@
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "cJSON.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "battlemetrics";
 
@@ -17,6 +19,18 @@ static char http_response[HTTP_RESPONSE_BUFFER_SIZE];
 static int http_response_len = 0;
 static char last_error[64] = "";
 static bool last_query_success = false;
+static SemaphoreHandle_t bm_mutex = NULL;
+
+void battlemetrics_init(void) {
+    if (bm_mutex == NULL) {
+        bm_mutex = xSemaphoreCreateMutex();
+        if (bm_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create BattleMetrics mutex");
+        } else {
+            ESP_LOGI(TAG, "BattleMetrics client initialized");
+        }
+    }
+}
 
 static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
     switch (evt->event_id) {
@@ -83,6 +97,13 @@ esp_err_t battlemetrics_query(const char *server_id, server_status_t *status) {
         return ESP_ERR_INVALID_ARG;
     }
 
+    // Acquire mutex for thread-safe HTTP client access
+    if (bm_mutex && xSemaphoreTake(bm_mutex, pdMS_TO_TICKS(30000)) != pdTRUE) {
+        strncpy(last_error, "Mutex timeout", sizeof(last_error) - 1);
+        last_query_success = false;
+        return ESP_ERR_TIMEOUT;
+    }
+
     // Initialize status with defaults
     memset(status, 0, sizeof(server_status_t));
     status->players = -1;
@@ -111,6 +132,7 @@ esp_err_t battlemetrics_query(const char *server_id, server_status_t *status) {
         ESP_LOGE(TAG, "%s", last_error);
         esp_http_client_cleanup(client);
         last_query_success = false;
+        if (bm_mutex) xSemaphoreGive(bm_mutex);
         return err;
     }
 
@@ -123,6 +145,7 @@ esp_err_t battlemetrics_query(const char *server_id, server_status_t *status) {
     if (status_code != 200) {
         snprintf(last_error, sizeof(last_error), "HTTP status %d", status_code);
         last_query_success = false;
+        if (bm_mutex) xSemaphoreGive(bm_mutex);
         return ESP_ERR_HTTP_BASE + status_code;
     }
 
@@ -132,6 +155,7 @@ esp_err_t battlemetrics_query(const char *server_id, server_status_t *status) {
         strncpy(last_error, "JSON parse failed", sizeof(last_error) - 1);
         ESP_LOGE(TAG, "Failed to parse JSON response");
         last_query_success = false;
+        if (bm_mutex) xSemaphoreGive(bm_mutex);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -141,6 +165,7 @@ esp_err_t battlemetrics_query(const char *server_id, server_status_t *status) {
         cJSON_Delete(root);
         strncpy(last_error, "Missing 'data' in response", sizeof(last_error) - 1);
         last_query_success = false;
+        if (bm_mutex) xSemaphoreGive(bm_mutex);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -149,6 +174,7 @@ esp_err_t battlemetrics_query(const char *server_id, server_status_t *status) {
         cJSON_Delete(root);
         strncpy(last_error, "Missing 'attributes' in response", sizeof(last_error) - 1);
         last_query_success = false;
+        if (bm_mutex) xSemaphoreGive(bm_mutex);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -192,6 +218,7 @@ esp_err_t battlemetrics_query(const char *server_id, server_status_t *status) {
 
     last_error[0] = '\0';
     last_query_success = true;
+    if (bm_mutex) xSemaphoreGive(bm_mutex);
     return ESP_OK;
 }
 

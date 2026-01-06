@@ -10,6 +10,7 @@
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "esp_log.h"
+#include "ff.h"  // For f_getfree()
 
 static const char *TAG = "sd_card";
 
@@ -131,4 +132,48 @@ void sd_card_deinit(void) {
         sd_mounted = false;
         ESP_LOGI(TAG, "SD card unmounted");
     }
+}
+
+esp_err_t sd_card_get_space(uint32_t *total_mb, uint32_t *free_mb) {
+    if (!sd_mounted || !total_mb || !free_mb) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    FATFS *fs;
+    DWORD fre_clust;
+
+    // Get volume information and free clusters
+    FRESULT res = f_getfree("0:", &fre_clust, &fs);
+    if (res != FR_OK) {
+        ESP_LOGE(TAG, "f_getfree failed: %d", res);
+        return ESP_FAIL;
+    }
+
+    // Calculate total and free space
+    // Total sectors = (total clusters) * (sectors per cluster)
+    // Free sectors = (free clusters) * (sectors per cluster)
+    uint64_t tot_sect = (uint64_t)(fs->n_fatent - 2) * fs->csize;
+    uint64_t fre_sect = (uint64_t)fre_clust * fs->csize;
+
+    // Convert to MB (sector size is typically 512 bytes)
+    *total_mb = (uint32_t)((tot_sect * 512) / (1024 * 1024));
+    *free_mb = (uint32_t)((fre_sect * 512) / (1024 * 1024));
+
+    return ESP_OK;
+}
+
+int sd_card_get_usage_percent(void) {
+    uint32_t total_mb, free_mb;
+
+    if (sd_card_get_space(&total_mb, &free_mb) != ESP_OK) {
+        return -1;
+    }
+
+    if (total_mb == 0) {
+        return 0;
+    }
+
+    // Calculate percentage used
+    uint32_t used_mb = total_mb - free_mb;
+    return (int)((used_mb * 100) / total_mb);
 }

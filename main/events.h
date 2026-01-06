@@ -38,6 +38,10 @@ typedef enum {
     EVT_SERVER_NEXT,
     EVT_SERVER_PREV,
 
+    // Multi-server watch
+    EVT_SECONDARY_SERVER_CLICKED,
+    EVT_SECONDARY_DATA_UPDATED,
+
 } event_type_t;
 
 // ============== EVENT DATA ==============
@@ -58,6 +62,10 @@ typedef struct {
 } alert_data_t;
 
 typedef struct {
+    int slot;  // Secondary slot index (0-2)
+} secondary_click_data_t;
+
+typedef struct {
     event_type_t type;
     union {
         screen_id_t screen;
@@ -65,6 +73,7 @@ typedef struct {
         server_add_data_t server;
         alert_data_t alert;
         int server_index;
+        secondary_click_data_t secondary;
     } data;
 } app_event_t;
 
@@ -114,6 +123,12 @@ bool events_post_server_add(const char *server_id, const char *display_name);
  * @param color Alert color (hex)
  */
 bool events_post_alert(const char *message, uint32_t color);
+
+/**
+ * Post a secondary server clicked event
+ * @param slot Secondary slot index (0-2)
+ */
+bool events_post_secondary_click(int slot);
 
 /**
  * Receive an event from the queue (non-blocking)

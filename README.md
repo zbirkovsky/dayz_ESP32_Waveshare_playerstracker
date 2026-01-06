@@ -13,22 +13,34 @@ Real-time player count monitor for DayZ servers using an ESP32-S3 with a 7" touc
 - **Smooth anti-aliased fonts** using LVGL graphics library
 - Real-time player count display (e.g., 42/60)
 - Modern dark theme with card-based UI
-- Color-coded progress bar (green/yellow/red based on capacity)
+- Color-coded progress bar (green/yellow/orange/red based on player count)
 - Animated progress bar transitions
 - Server online/offline status indicator
 - Day/night indicator with in-game server time
+- **SD card usage indicator** in top bar
+- **Screen saver** with configurable timeout (backlight off, touch to wake)
 - 800x480 full-color touchscreen display
 
-### Multi-Server Support
-- Track up to **5 DayZ servers**
+### Multi-Server Watch Dashboard
+- Track up to **5 DayZ servers** simultaneously
+- **Main server** with large display card
+- **Up to 3 secondary servers** shown as compact cards below
+- **Trend indicators** showing player count change over ~2 hours (↑/↓)
 - Quick switching between servers via touch navigation
 - Per-server alert thresholds and settings
 
 ### Player History & Charts
 - **Historical player count chart** with time ranges:
   - 1 hour / 8 hours / 24 hours / 1 week
-- SD card persistence for history data
 - Touch-selectable time range buttons
+
+### Data Storage (SD Card)
+- **JSON Lines format** for human-readable history files
+- Daily history files: `/sdcard/history/server_X/YYYY-MM-DD.jsonl`
+- **Server config export**: `/sdcard/servers.json` (auto-sync with settings)
+- NVS backup for boot without SD card
+- **~600 years** of storage capacity per server on 16GB SD card
+- 1-year retention with automatic cleanup
 
 ### Smart Alerts
 - **Configurable alert threshold** (beep when players >= X)
@@ -69,17 +81,23 @@ Real-time player count monitor for DayZ servers using an ESP32-S3 with a 7" touc
 ## Display Preview
 
 ```
-+------------------------------------------+
-|           DayZ Server Monitor            |
-|        < Server Name (1/3) >             |
-|                                          |
-|     PLAYERS        42        /60         |
-|                                          |
-|     [====================--------]       |
-|                                          |
-|  Day 14:32    Restart: ~2h 15m           |
-|  Updated: 14:32:15 CET                   |
-+------------------------------------------+
++--------------------------------------------------+
+| [Settings] [History]  < Server (1/4) >  SD:2% [↻]|
++--------------------------------------------------+
+|                                                  |
+|   ┌──────────────────────────────────────────┐   |
+|   │  PLAYERS           42 / 60          ↑ +5 │   |
+|   │  [████████████████████░░░░░░░░░░░░░░░░░] │   |
+|   │  Day 14:32    Restart: ~2h 15m           │   |
+|   │  Updated: 14:32:15 CET                   │   |
+|   └──────────────────────────────────────────┘   |
+|                                                  |
+|   ┌─────────────┐ ┌─────────────┐ ┌────────────┐ |
+|   │ Server 2    │ │ Server 3    │ │ Server 4   │ |
+|   │   38/60 ↓-3 │ │   52/60 ↑+8 │ │   12/60 -- │ |
+|   │ Night 02:15 │ │ Day 14:30   │ │ Day 08:45  │ |
+|   └─────────────┘ └─────────────┘ └────────────┘ |
++--------------------------------------------------+
 ```
 
 ## Quick Start
@@ -175,6 +193,7 @@ All state is managed through `app_state` with mutex protection for thread safety
 | Setting | Description |
 |---------|-------------|
 | **Refresh Interval** | How often to fetch server data (10-300 sec) |
+| **Screen Off** | Screen saver timeout (Off, 5m-4h) |
 | **Alerts Enabled** | Toggle buzzer/visual alerts |
 | **Alert Threshold** | Beep when player count >= this value |
 | **Manual Schedule** | Enable manual restart time input |
@@ -205,6 +224,38 @@ Managed automatically via ESP-IDF component manager:
 ## API
 
 Uses the [BattleMetrics API](https://www.battlemetrics.com/developers/documentation) to fetch server status. No API key required for basic queries.
+
+## Changelog
+
+### v2.1.0 - Multi-Server Dashboard & JSON Storage
+- **Multi-Server Watch Dashboard**: View main server + up to 3 secondary servers simultaneously
+- **Trend Indicators**: Shows player count change over ~2 hours (↑/↓ with delta)
+- **SD Card Status**: Shows usage percentage in top bar (color-coded)
+- **JSON Storage**: Human-readable history files (`/sdcard/history/server_X/YYYY-MM-DD.jsonl`)
+- **Config Export**: Server settings auto-saved to `/sdcard/servers.json`
+- **Screen Saver**: Configurable backlight timeout (touch to wake)
+- **Edge-to-edge dashboard layout**: Optimized screen real estate
+
+### v2.0.0 - Major Architecture Refactoring
+- Complete modular restructuring (drivers, services, UI layers)
+- Thread-safe centralized state management
+- Event-driven UI with clean separation of concerns
+- Replaced manual JSON parsing with cJSON library
+- Fixed GT911 touch controller initialization
+- Fixed SD card CH422G I2C addressing
+
+### v1.1.0 - Restart Countdown & Alerts
+- Manual restart schedule configuration (CET timezone)
+- Active buzzer support for player threshold alerts
+- Day/night indicator with in-game server time
+- SNTP time synchronization
+
+### v1.0.0 - Initial Release
+- Real-time player count monitoring via BattleMetrics API
+- LVGL graphics with anti-aliased fonts
+- Multi-server support (up to 5 servers)
+- Player history charts
+- WiFi configuration via touch UI
 
 ## License
 

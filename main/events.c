@@ -76,6 +76,14 @@ bool events_post_alert(const char *message, uint32_t color) {
     return events_post(&event);
 }
 
+bool events_post_secondary_click(int slot) {
+    app_event_t event = {
+        .type = EVT_SECONDARY_SERVER_CLICKED,
+        .data.secondary.slot = slot
+    };
+    return events_post(&event);
+}
+
 bool events_receive(app_event_t *event) {
     if (!event_queue || !event) return false;
 

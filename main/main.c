@@ -34,6 +34,7 @@
 #include "services/battlemetrics.h"
 #include "services/settings_store.h"
 #include "services/history_store.h"
+#include "services/secondary_fetch.h"
 #include "ui/ui_styles.h"
 #include "ui/ui_widgets.h"
 
@@ -61,6 +62,8 @@ static lv_obj_t *lbl_status = NULL;
 static lv_obj_t *lbl_update = NULL;
 static lv_obj_t *lbl_ip = NULL;
 static lv_obj_t *lbl_restart = NULL;
+static lv_obj_t *lbl_main_trend = NULL;
+static lv_obj_t *lbl_sd_status = NULL;
 static lv_obj_t *btn_prev_server = NULL;
 static lv_obj_t *btn_next_server = NULL;
 static lv_obj_t *alert_overlay = NULL;
@@ -88,8 +91,14 @@ static lv_obj_t *chart_history = NULL;
 static lv_chart_series_t *chart_series = NULL;
 static lv_obj_t *lbl_history_legend = NULL;
 
+// Multi-server watch widgets
+static lv_obj_t *secondary_container = NULL;
+static secondary_box_widgets_t secondary_boxes[MAX_SECONDARY_SERVERS];
+static lv_obj_t *add_server_boxes[MAX_SECONDARY_SERVERS];
+
 // ============== FORWARD DECLARATIONS ==============
 static void update_ui(void);
+static void update_sd_status(void);
 static void create_main_screen(void);
 static void create_settings_screen(void);
 static void create_wifi_settings_screen(void);
@@ -102,6 +111,8 @@ static void check_alerts(void);
 static void show_alert(const char *message, lv_color_t color);
 static void hide_alert(void);
 static void process_events(void);
+static void update_secondary_boxes(void);
+static void create_secondary_boxes(void);
 
 // ============== RESTART TRACKING ==============
 
@@ -251,6 +262,9 @@ static void query_server_status(void) {
 
         // Add to history
         history_add_entry(status.players);
+
+        // Track trend for main server
+        app_state_add_main_trend_point(status.players);
 
         // Check for alerts
         check_alerts();
@@ -580,6 +594,16 @@ static void on_history_range_clicked(lv_event_t *e) {
     refresh_history_chart();
 }
 
+static void on_secondary_box_clicked(lv_event_t *e) {
+    int slot = (int)(intptr_t)lv_event_get_user_data(e);
+    events_post_secondary_click(slot);
+}
+
+static void on_add_server_from_main_clicked(lv_event_t *e) {
+    (void)e;
+    events_post_screen_change(SCREEN_ADD_SERVER);
+}
+
 // ============== UI SCREENS ==============
 
 static void create_main_screen(void) {
@@ -588,9 +612,9 @@ static void create_main_screen(void) {
     // Add global touch handler for screensaver activity tracking
     lv_obj_add_event_cb(screen_main, on_screen_touch, LV_EVENT_PRESSED, NULL);
 
-    // Main card
-    main_card = ui_create_card(screen_main, 760, 400);
-    lv_obj_align(main_card, LV_ALIGN_CENTER, 0, 20);
+    // Main card - compacted height for multi-server view
+    main_card = ui_create_card(screen_main, 760, MAIN_CARD_HEIGHT_COMPACT);
+    lv_obj_align(main_card, LV_ALIGN_TOP_MID, 0, 65);
     lv_obj_add_flag(main_card, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(main_card, on_card_clicked, LV_EVENT_CLICKED, NULL);
 
@@ -606,6 +630,13 @@ static void create_main_screen(void) {
     btn_next_server = ui_create_icon_button(screen_main, LV_SYMBOL_RIGHT,
                                              LCD_WIDTH/2 + 75, 10, on_next_server_clicked);
 
+    // SD card status indicator
+    lbl_sd_status = lv_label_create(screen_main);
+    lv_label_set_text(lbl_sd_status, "SD: --");
+    lv_obj_set_style_text_font(lbl_sd_status, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_sd_status, COLOR_TEXT_MUTED, 0);
+    lv_obj_align(lbl_sd_status, LV_ALIGN_TOP_RIGHT, -140, 25);
+
     // Refresh button
     lv_obj_t *btn_refresh = lv_btn_create(screen_main);
     lv_obj_set_size(btn_refresh, 110, 50);
@@ -619,46 +650,40 @@ static void create_main_screen(void) {
     lv_obj_set_style_text_font(lbl_refresh, &lv_font_montserrat_14, 0);
     lv_obj_center(lbl_refresh);
 
-    // Title
-    lbl_title = lv_label_create(main_card);
-    lv_label_set_text(lbl_title, APP_NAME);
-    lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_48, 0);
-    lv_obj_set_style_text_color(lbl_title, COLOR_DAYZ_GREEN, 0);
-    lv_obj_set_style_text_letter_space(lbl_title, 4, 0);
-    lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, -10);
+    // Server name + time row
+    lv_obj_t *server_row = ui_create_row(main_card, 700, 30);
+    lv_obj_align(server_row, LV_ALIGN_TOP_MID, 0, 0);
 
-    // Server name
-    lbl_server = lv_label_create(main_card);
+    lbl_server = lv_label_create(server_row);
     lv_label_set_text(lbl_server, "Loading...");
-    lv_obj_set_style_text_font(lbl_server, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(lbl_server, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(lbl_server, COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(lbl_server, LV_ALIGN_TOP_MID, 0, 45);
+    lv_obj_set_width(lbl_server, 450);
+    lv_label_set_long_mode(lbl_server, LV_LABEL_LONG_DOT);
+    lv_obj_align(lbl_server, LV_ALIGN_LEFT_MID, 0, 0);
 
-    // Server time container
-    lv_obj_t *time_cont = ui_create_row(main_card, 200, 30);
-    lv_obj_align(time_cont, LV_ALIGN_TOP_MID, 0, 75);
-
-    day_night_indicator = lv_obj_create(time_cont);
-    lv_obj_set_size(day_night_indicator, 20, 20);
-    lv_obj_align(day_night_indicator, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_radius(day_night_indicator, 10, 0);
+    // Day/night + time on the right
+    day_night_indicator = lv_obj_create(server_row);
+    lv_obj_set_size(day_night_indicator, 16, 16);
+    lv_obj_align(day_night_indicator, LV_ALIGN_RIGHT_MID, -80, 0);
+    lv_obj_set_style_radius(day_night_indicator, 8, 0);
     lv_obj_set_style_bg_color(day_night_indicator, COLOR_DAY_SUN, 0);
     lv_obj_set_style_border_width(day_night_indicator, 0, 0);
     lv_obj_add_flag(day_night_indicator, LV_OBJ_FLAG_HIDDEN);
 
-    lbl_server_time = lv_label_create(time_cont);
+    lbl_server_time = lv_label_create(server_row);
     lv_label_set_text(lbl_server_time, "");
-    lv_obj_set_style_text_font(lbl_server_time, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(lbl_server_time, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_server_time, COLOR_TEXT_SECONDARY, 0);
-    lv_obj_align(lbl_server_time, LV_ALIGN_LEFT_MID, 28, 0);
+    lv_obj_align(lbl_server_time, LV_ALIGN_RIGHT_MID, 0, 0);
 
-    // Players container
-    lv_obj_t *players_cont = ui_create_row(main_card, 400, 100);
-    lv_obj_align(players_cont, LV_ALIGN_CENTER, 0, -10);
+    // Players container with trend
+    lv_obj_t *players_cont = ui_create_row(main_card, 550, 60);
+    lv_obj_align(players_cont, LV_ALIGN_TOP_MID, 0, 45);
 
     lv_obj_t *lbl_players_title = lv_label_create(players_cont);
     lv_label_set_text(lbl_players_title, "PLAYERS");
-    lv_obj_set_style_text_font(lbl_players_title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(lbl_players_title, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(lbl_players_title, COLOR_INFO, 0);
     lv_obj_align(lbl_players_title, LV_ALIGN_LEFT_MID, 0, 0);
 
@@ -666,53 +691,61 @@ static void create_main_screen(void) {
     lv_label_set_text(lbl_players, "---");
     lv_obj_set_style_text_font(lbl_players, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(lbl_players, COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(lbl_players, LV_ALIGN_CENTER, 20, 0);
+    lv_obj_align(lbl_players, LV_ALIGN_LEFT_MID, 120, 0);
 
     lbl_max = lv_label_create(players_cont);
     lv_label_set_text(lbl_max, "/60");
-    lv_obj_set_style_text_font(lbl_max, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_font(lbl_max, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_max, COLOR_TEXT_MUTED, 0);
-    lv_obj_align(lbl_max, LV_ALIGN_RIGHT_MID, 0, 5);
+    lv_obj_align(lbl_max, LV_ALIGN_LEFT_MID, 200, 3);
+
+    // Trend indicator (2h trend)
+    lbl_main_trend = lv_label_create(players_cont);
+    lv_label_set_text(lbl_main_trend, "");
+    lv_obj_set_style_text_font(lbl_main_trend, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(lbl_main_trend, COLOR_TEXT_SECONDARY, 0);
+    lv_obj_align(lbl_main_trend, LV_ALIGN_RIGHT_MID, 0, 0);
 
     // Progress bar
     bar_players = lv_bar_create(main_card);
-    lv_obj_set_size(bar_players, 680, 35);
-    lv_obj_align(bar_players, LV_ALIGN_CENTER, 0, 55);
+    lv_obj_set_size(bar_players, 680, 25);
+    lv_obj_align(bar_players, LV_ALIGN_TOP_MID, 0, 120);
     lv_bar_set_range(bar_players, 0, 60);
     lv_bar_set_value(bar_players, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(bar_players, lv_color_hex(0x333333), 0);
     lv_obj_set_style_bg_color(bar_players, COLOR_SUCCESS, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(bar_players, 10, 0);
-    lv_obj_set_style_radius(bar_players, 10, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(bar_players, 8, 0);
+    lv_obj_set_style_radius(bar_players, 8, LV_PART_INDICATOR);
 
-    // Restart countdown
-    lbl_restart = lv_label_create(main_card);
+    // Restart countdown + status row
+    lv_obj_t *info_row = ui_create_row(main_card, 680, 35);
+    lv_obj_align(info_row, LV_ALIGN_TOP_MID, 0, 160);
+
+    lbl_restart = lv_label_create(info_row);
     lv_label_set_text(lbl_restart, "");
-    lv_obj_set_style_text_font(lbl_restart, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(lbl_restart, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_restart, lv_color_hex(0xFF6B6B), 0);
-    lv_obj_align(lbl_restart, LV_ALIGN_CENTER, 0, 95);
+    lv_obj_align(lbl_restart, LV_ALIGN_LEFT_MID, 0, 0);
 
-    // Status line
-    lv_obj_t *status_cont = ui_create_row(main_card, 680, 50);
-    lv_obj_align(status_cont, LV_ALIGN_BOTTOM_MID, 0, 10);
-
-    lbl_status = lv_label_create(status_cont);
+    lbl_status = lv_label_create(info_row);
     lv_label_set_text(lbl_status, "CONNECTING...");
-    lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_status, lv_color_hex(0xFFA500), 0);
-    lv_obj_align(lbl_status, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_align(lbl_status, LV_ALIGN_CENTER, 0, 0);
 
-    lbl_update = lv_label_create(status_cont);
+    lbl_update = lv_label_create(info_row);
     lv_label_set_text(lbl_update, "");
-    lv_obj_set_style_text_font(lbl_update, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(lbl_update, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_update, COLOR_TEXT_MUTED, 0);
-    lv_obj_align(lbl_update, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(lbl_update, LV_ALIGN_RIGHT_MID, 0, 0);
 
-    lbl_ip = lv_label_create(status_cont);
+    // Remove IP label from compact view (available in settings)
+    lbl_ip = lv_label_create(main_card);
     lv_label_set_text(lbl_ip, "");
-    lv_obj_set_style_text_font(lbl_ip, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_color(lbl_ip, COLOR_TEXT_DISABLED, 0);
-    lv_obj_align(lbl_ip, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_add_flag(lbl_ip, LV_OBJ_FLAG_HIDDEN);
+
+    // Create secondary server container
+    create_secondary_boxes();
 }
 
 static void create_settings_screen(void) {
@@ -1049,6 +1082,117 @@ static void refresh_history_chart(void) {
     }
 }
 
+// ============== SECONDARY SERVER WATCH ==============
+
+static void create_secondary_boxes(void) {
+    app_state_t *state = app_state_get();
+
+    // Container positioned with same gap as between boxes (8px below main card)
+    // Main card: y=65, height=220, bottom=285. Gap=8px. Container top=293
+    secondary_container = lv_obj_create(screen_main);
+    lv_obj_set_size(secondary_container, 760, SECONDARY_CONTAINER_HEIGHT);
+    lv_obj_align(secondary_container, LV_ALIGN_TOP_MID, 0, 65 + MAIN_CARD_HEIGHT_COMPACT + SECONDARY_BOX_GAP);
+    lv_obj_set_style_bg_opa(secondary_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(secondary_container, 0, 0);
+    lv_obj_set_style_pad_all(secondary_container, 0, 0);
+    lv_obj_clear_flag(secondary_container, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Layout: 3 boxes centered with gaps
+    int total_width = (SECONDARY_BOX_WIDTH * 3) + (SECONDARY_BOX_GAP * 2);
+    int start_x = (760 - total_width) / 2;
+
+    // Initialize secondary indices
+    app_state_update_secondary_indices();
+
+    for (int i = 0; i < MAX_SECONDARY_SERVERS; i++) {
+        int x_pos = start_x + (i * (SECONDARY_BOX_WIDTH + SECONDARY_BOX_GAP));
+
+        // Create actual server box or add server placeholder
+        if (i < state->runtime.secondary_count) {
+            // Real secondary server box
+            secondary_boxes[i] = ui_create_secondary_box(
+                secondary_container,
+                SECONDARY_BOX_WIDTH,
+                SECONDARY_BOX_HEIGHT,
+                on_secondary_box_clicked,
+                (void*)(intptr_t)i
+            );
+            lv_obj_set_pos(secondary_boxes[i].container, x_pos, 2);
+            add_server_boxes[i] = NULL;
+        } else if (state->settings.server_count < MAX_SERVERS) {
+            // Add server placeholder
+            add_server_boxes[i] = ui_create_add_server_box(
+                secondary_container,
+                SECONDARY_BOX_WIDTH,
+                SECONDARY_BOX_HEIGHT,
+                on_add_server_from_main_clicked
+            );
+            lv_obj_set_pos(add_server_boxes[i], x_pos, 2);
+            memset(&secondary_boxes[i], 0, sizeof(secondary_box_widgets_t));
+        } else {
+            // Max servers reached, hide this slot
+            add_server_boxes[i] = NULL;
+            memset(&secondary_boxes[i], 0, sizeof(secondary_box_widgets_t));
+        }
+    }
+}
+
+static void update_secondary_boxes(void) {
+    app_state_t *state = app_state_get();
+
+    if (!secondary_container) return;
+    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
+
+    // Re-check secondary indices in case server list changed
+    app_state_update_secondary_indices();
+
+    for (int slot = 0; slot < MAX_SECONDARY_SERVERS; slot++) {
+        if (slot < state->runtime.secondary_count && secondary_boxes[slot].container) {
+            // Get the actual server index for this slot
+            uint8_t srv_idx = state->runtime.secondary_server_indices[slot];
+            server_config_t *srv = &state->settings.servers[srv_idx];
+            secondary_server_status_t *status = &state->runtime.secondary[slot];
+
+            // Calculate trend
+            int trend = app_state_calculate_trend(slot);
+
+            // Update the box
+            ui_update_secondary_box(
+                &secondary_boxes[slot],
+                srv->display_name,
+                status->player_count,
+                status->max_players > 0 ? status->max_players : srv->max_players,
+                status->server_time,
+                status->is_daytime,
+                trend,
+                status->valid
+            );
+
+            // Make sure the box is visible
+            lv_obj_clear_flag(secondary_boxes[slot].container, LV_OBJ_FLAG_HIDDEN);
+
+            // Hide add server box if it exists
+            if (add_server_boxes[slot]) {
+                lv_obj_add_flag(add_server_boxes[slot], LV_OBJ_FLAG_HIDDEN);
+            }
+        } else {
+            // Hide secondary box if no server in this slot
+            if (secondary_boxes[slot].container) {
+                lv_obj_add_flag(secondary_boxes[slot].container, LV_OBJ_FLAG_HIDDEN);
+            }
+
+            // Show add server box if we haven't reached max
+            if (add_server_boxes[slot] && state->settings.server_count < MAX_SERVERS) {
+                lv_obj_clear_flag(add_server_boxes[slot], LV_OBJ_FLAG_HIDDEN);
+            } else if (add_server_boxes[slot]) {
+                lv_obj_add_flag(add_server_boxes[slot], LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+
+    lvgl_port_unlock();
+}
+
 // ============== SCREEN NAVIGATION ==============
 
 static void switch_to_screen(screen_id_t screen) {
@@ -1173,8 +1317,25 @@ static void update_ui(void) {
 
         // Use absolute player count for color (red from 50+)
         lv_obj_set_style_bg_color(bar_players, ui_get_player_color(state->runtime.current_players), LV_PART_INDICATOR);
+
+        // Main server trend (2h)
+        int trend = app_state_calculate_main_trend();
+        if (trend != 0) {
+            char trend_buf[16];
+            if (trend > 0) {
+                snprintf(trend_buf, sizeof(trend_buf), LV_SYMBOL_UP "+%d", trend);
+                lv_obj_set_style_text_color(lbl_main_trend, COLOR_DAYZ_GREEN, 0);
+            } else {
+                snprintf(trend_buf, sizeof(trend_buf), LV_SYMBOL_DOWN "%d", trend);
+                lv_obj_set_style_text_color(lbl_main_trend, COLOR_DANGER, 0);
+            }
+            lv_label_set_text(lbl_main_trend, trend_buf);
+        } else {
+            lv_label_set_text(lbl_main_trend, "");
+        }
     } else {
         lv_label_set_text(lbl_players, "---");
+        lv_label_set_text(lbl_main_trend, "");
     }
 
     // Status
@@ -1228,6 +1389,33 @@ static void update_ui(void) {
     lvgl_port_unlock();
 }
 
+static void update_sd_status(void) {
+    if (!lbl_sd_status) return;
+    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
+
+    int usage = sd_card_get_usage_percent();
+    char buf[16];
+
+    if (usage < 0) {
+        // SD card not mounted
+        lv_label_set_text(lbl_sd_status, "SD: --");
+        lv_obj_set_style_text_color(lbl_sd_status, COLOR_DANGER, 0);
+    } else {
+        snprintf(buf, sizeof(buf), "SD: %d%%", usage);
+        lv_label_set_text(lbl_sd_status, buf);
+
+        if (usage > 90) {
+            lv_obj_set_style_text_color(lbl_sd_status, COLOR_WARNING, 0);
+        } else if (usage > 80) {
+            lv_obj_set_style_text_color(lbl_sd_status, COLOR_ALERT_ORANGE, 0);
+        } else {
+            lv_obj_set_style_text_color(lbl_sd_status, COLOR_TEXT_MUTED, 0);
+        }
+    }
+
+    lvgl_port_unlock();
+}
+
 // ============== EVENT PROCESSING ==============
 
 static void process_events(void) {
@@ -1250,45 +1438,115 @@ static void process_events(void) {
                 settings_add_server(evt.data.server.server_id, evt.data.server.display_name);
                 state->runtime.current_players = -1;
                 state->runtime.server_time[0] = '\0';
+                app_state_clear_secondary_data();
+                app_state_update_secondary_indices();
+                secondary_fetch_refresh_now();
                 app_state_request_refresh();
                 switch_to_screen(SCREEN_MAIN);
                 break;
 
-            case EVT_SERVER_DELETE:
+            case EVT_SERVER_DELETE: {
+                int old_idx = state->settings.active_server_index;
                 settings_delete_server(evt.data.server_index);
+                int new_idx = state->settings.active_server_index;
+                // Switch history if active server changed
+                if (old_idx != new_idx || evt.data.server_index == old_idx) {
+                    history_switch_server(-1, new_idx);  // -1 because deleted server data is gone
+                }
                 state->runtime.current_players = -1;
                 state->runtime.server_time[0] = '\0';
+                app_state_clear_secondary_data();
+                app_state_update_secondary_indices();
+                secondary_fetch_refresh_now();
                 app_state_request_refresh();
                 switch_to_screen(SCREEN_MAIN);
                 break;
+            }
 
             case EVT_SERVER_NEXT:
                 if (state->settings.server_count > 1) {
-                    state->settings.active_server_index =
-                        (state->settings.active_server_index + 1) % state->settings.server_count;
+                    int old_idx = state->settings.active_server_index;
+                    int new_idx = (old_idx + 1) % state->settings.server_count;
+                    state->settings.active_server_index = new_idx;
+                    history_switch_server(old_idx, new_idx);
                     state->runtime.current_players = -1;
                     state->runtime.server_time[0] = '\0';
+                    app_state_clear_main_trend();
+                    app_state_clear_secondary_data();
+                    app_state_update_secondary_indices();
+                    secondary_fetch_refresh_now();
                     app_state_request_refresh();
                     settings_save();
+                    update_secondary_boxes();
                 }
                 break;
 
             case EVT_SERVER_PREV:
                 if (state->settings.server_count > 1) {
-                    if (state->settings.active_server_index == 0) {
-                        state->settings.active_server_index = state->settings.server_count - 1;
+                    int old_idx = state->settings.active_server_index;
+                    int new_idx;
+                    if (old_idx == 0) {
+                        new_idx = state->settings.server_count - 1;
                     } else {
-                        state->settings.active_server_index--;
+                        new_idx = old_idx - 1;
                     }
+                    state->settings.active_server_index = new_idx;
+                    history_switch_server(old_idx, new_idx);
                     state->runtime.current_players = -1;
                     state->runtime.server_time[0] = '\0';
+                    app_state_clear_main_trend();
+                    app_state_clear_secondary_data();
+                    app_state_update_secondary_indices();
+                    secondary_fetch_refresh_now();
                     app_state_request_refresh();
                     settings_save();
+                    update_secondary_boxes();
                 }
                 break;
 
             case EVT_REFRESH_DATA:
                 app_state_request_refresh();
+                break;
+
+            case EVT_SECONDARY_SERVER_CLICKED: {
+                // Swap clicked secondary server with main
+                int slot = evt.data.secondary.slot;
+                if (slot >= 0 && slot < state->runtime.secondary_count) {
+                    int old_active = state->settings.active_server_index;
+                    int new_active = state->runtime.secondary_server_indices[slot];
+
+                    ESP_LOGI(TAG, "Swapping server: slot %d, index %d -> %d",
+                             slot, old_active, new_active);
+
+                    // Switch active server
+                    state->settings.active_server_index = new_active;
+
+                    // Switch history
+                    history_switch_server(old_active, new_active);
+
+                    // Clear trend and secondary data, then recalculate
+                    app_state_clear_main_trend();
+                    app_state_clear_secondary_data();
+                    app_state_update_secondary_indices();
+
+                    // Request refresh for new main server
+                    state->runtime.current_players = -1;
+                    state->runtime.server_time[0] = '\0';
+                    app_state_request_refresh();
+
+                    // Trigger secondary fetch refresh
+                    secondary_fetch_refresh_now();
+
+                    settings_save();
+                    update_ui();
+                    update_secondary_boxes();
+                }
+                break;
+            }
+
+            case EVT_SECONDARY_DATA_UPDATED:
+                // Refresh secondary boxes display
+                update_secondary_boxes();
                 break;
 
             default:
@@ -1336,12 +1594,14 @@ void app_main(void) {
     // Initialize UI styles
     ui_styles_init();
 
-    // Now I2C is ready, try to load history from SD
+    // Now I2C is ready, try to load history from SD for the active server
+    app_state_t *init_state = app_state_get();
+    int active_srv = init_state->settings.active_server_index;
     if (sd_card_init() == ESP_OK) {
-        history_load_from_sd();
+        history_load_from_sd(active_srv);
     }
     if (history_get_count() == 0) {
-        history_load_from_nvs();
+        history_load_from_nvs(active_srv);
     }
 
     // Create main screen
@@ -1367,6 +1627,9 @@ void app_main(void) {
         settings_save();
     }
 
+    // Initialize BattleMetrics API client (creates mutex for thread safety)
+    battlemetrics_init();
+
     // Initialize WiFi
     wifi_manager_init(state->settings.wifi_ssid, state->settings.wifi_password);
 
@@ -1378,11 +1641,17 @@ void app_main(void) {
         ESP_LOGW(TAG, "WiFi connection timeout, will retry in background");
     }
 
+    // Start secondary server fetch background task
+    secondary_fetch_init();
+    secondary_fetch_start();
+
     // Give LVGL task time to process before starting main loop
     vTaskDelay(pdMS_TO_TICKS(500));
 
     // Initial UI update
     update_ui();
+    update_sd_status();
+    update_secondary_boxes();
 
     // Main loop
     while (1) {
@@ -1400,6 +1669,7 @@ void app_main(void) {
             // Only update UI if not in screensaver mode
             if (!state->ui.screensaver_active) {
                 update_ui();
+                update_sd_status();
             }
         }
 

@@ -168,4 +168,56 @@ lv_obj_t* ui_create_screen(void);
  */
 lv_obj_t* ui_create_keyboard(lv_obj_t *parent, lv_obj_t *initial_textarea);
 
+// ============== MULTI-SERVER WATCH ==============
+
+/**
+ * Widget pointers for secondary server box
+ */
+typedef struct {
+    lv_obj_t *container;            // Main box container
+    lv_obj_t *lbl_name;             // Server name label
+    lv_obj_t *lbl_players;          // Player count label (e.g., "45/60")
+    lv_obj_t *lbl_time;             // Server time label
+    lv_obj_t *lbl_trend;            // Trend label (e.g., "+12" or "-5")
+    lv_obj_t *day_night_indicator;  // Day/night icon
+} secondary_box_widgets_t;
+
+/**
+ * Create a secondary server watch box
+ * @param parent Parent container
+ * @param width Box width
+ * @param height Box height
+ * @param click_callback Click callback (for swapping with main)
+ * @param user_data User data (slot index)
+ * @return Widgets structure
+ */
+secondary_box_widgets_t ui_create_secondary_box(lv_obj_t *parent, int width, int height,
+                                                  lv_event_cb_t click_callback, void *user_data);
+
+/**
+ * Create an "Add Server" placeholder box
+ * @param parent Parent container
+ * @param width Box width
+ * @param height Box height
+ * @param click_callback Click callback
+ * @return The box container
+ */
+lv_obj_t* ui_create_add_server_box(lv_obj_t *parent, int width, int height,
+                                    lv_event_cb_t click_callback);
+
+/**
+ * Update secondary box display values
+ * @param widgets Widgets to update
+ * @param name Server name
+ * @param players Current players
+ * @param max_players Maximum players
+ * @param server_time Server time string
+ * @param is_daytime true if daytime
+ * @param trend_delta Trend delta (+ for joining, - for leaving)
+ * @param valid true if data is valid
+ */
+void ui_update_secondary_box(secondary_box_widgets_t *widgets, const char *name,
+                              int players, int max_players, const char *server_time,
+                              bool is_daytime, int trend_delta, bool valid);
+
 #endif // UI_WIDGETS_H

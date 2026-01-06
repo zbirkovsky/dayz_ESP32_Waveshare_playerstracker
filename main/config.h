@@ -8,7 +8,7 @@
 
 // ============== APPLICATION CONSTANTS ==============
 #define APP_NAME            "DayZ Server Monitor"
-#define APP_VERSION         "2.0.0"
+#define APP_VERSION         "2.1.0"
 
 #define MAX_SERVERS         5
 #define MAX_HISTORY_ENTRIES 10080   // 7 days at 1 min intervals
@@ -80,12 +80,16 @@
 #define MAX_RESTART_HISTORY         10      // Track last 10 restarts per server
 
 // ============== HISTORY STORAGE ==============
-#define HISTORY_FILE_MAGIC      0xDA120001
-#define HISTORY_FILE_PATH       "/sdcard/history.bin"
+#define HISTORY_FILE_MAGIC      0xDA120002  // Bumped version for per-server history
+#define HISTORY_FILE_PREFIX     "/sdcard/hist_"   // Will append server index, e.g. hist_0.bin
 #define NVS_HISTORY_MAX         200
-#define NVS_HISTORY_KEY         "hist_data"
-#define NVS_HISTORY_META        "hist_meta"
 #define HISTORY_SAVE_INTERVAL   10          // Save every 10 new entries
+
+// ============== JSON STORAGE ==============
+#define HISTORY_JSON_DIR        "/sdcard/history"       // Root directory for JSON history
+#define CONFIG_JSON_FILE        "/sdcard/servers.json"  // Server configuration export
+#define HISTORY_RETENTION_DAYS  365                     // Keep 1 year of history files
+#define JSON_HISTORY_VERSION    1                       // JSON format version
 
 // ============== NETWORK ==============
 #define HTTP_RESPONSE_BUFFER_SIZE   16384
@@ -100,6 +104,21 @@
 #define UI_LOCK_TIMEOUT_MS      100
 #define LVGL_TASK_PRIORITY      4
 #define LVGL_TASK_STACK         8192
+
+// ============== MULTI-SERVER WATCH ==============
+#define MAX_SECONDARY_SERVERS       3       // Show up to 3 secondary servers
+#define SECONDARY_REFRESH_SEC       120     // Fetch secondary servers every 2 minutes
+#define TREND_HISTORY_SIZE          4       // Store 4 data points for trend calculation
+#define TREND_WINDOW_SEC            7200    // 2 hour trend window
+
+// Compacted main card layout (edge-to-edge vertical)
+// Screen=480, Top=65, Bottom margin=5, Gap=8, Secondary=140
+// Main card = 480 - 65 - 5 - 8 - 140 = 262
+#define MAIN_CARD_HEIGHT_COMPACT    262
+#define SECONDARY_BOX_WIDTH         248     // 3 boxes + 2 gaps = 760px (matches main card)
+#define SECONDARY_BOX_HEIGHT        130
+#define SECONDARY_BOX_GAP           8       // Horizontal and vertical gap
+#define SECONDARY_CONTAINER_HEIGHT  140
 
 // ============== DEFAULT VALUES ==============
 #define DEFAULT_REFRESH_INTERVAL_SEC    30

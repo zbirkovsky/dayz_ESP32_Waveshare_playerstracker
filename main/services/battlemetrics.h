@@ -23,7 +23,14 @@ typedef struct {
 } server_status_t;
 
 /**
+ * Initialize BattleMetrics client (creates mutex for thread safety)
+ * Must be called before using battlemetrics_query from multiple tasks
+ */
+void battlemetrics_init(void);
+
+/**
  * Query server status from BattleMetrics API
+ * Thread-safe: can be called from multiple tasks
  * @param server_id BattleMetrics server ID
  * @param status Output structure to fill
  * @return ESP_OK on success, error code on failure

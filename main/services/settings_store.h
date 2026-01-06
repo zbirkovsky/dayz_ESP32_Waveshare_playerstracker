@@ -70,4 +70,20 @@ esp_err_t settings_save_restart_schedule(int server_index, uint8_t hour,
  */
 void settings_init(void);
 
+// ============== JSON CONFIG EXPORT/IMPORT ==============
+
+/**
+ * Export server configurations to JSON file on SD card
+ * Does NOT export WiFi credentials (security)
+ * @return ESP_OK on success
+ */
+esp_err_t settings_export_to_json(void);
+
+/**
+ * Import server configurations from JSON file on SD card
+ * Does NOT import WiFi credentials
+ * @return ESP_OK on success, ESP_ERR_NOT_FOUND if no file
+ */
+esp_err_t settings_import_from_json(void);
+
 #endif // SETTINGS_STORE_H

@@ -268,3 +268,174 @@ lv_obj_t* ui_create_keyboard(lv_obj_t *parent, lv_obj_t *initial_textarea) {
     }
     return kb;
 }
+
+// ============== MULTI-SERVER WATCH ==============
+
+secondary_box_widgets_t ui_create_secondary_box(lv_obj_t *parent, int width, int height,
+                                                  lv_event_cb_t click_callback, void *user_data) {
+    secondary_box_widgets_t widgets = {0};
+
+    // Container box with border
+    widgets.container = lv_obj_create(parent);
+    lv_obj_set_size(widgets.container, width, height);
+    lv_obj_set_style_bg_color(widgets.container, lv_color_hex(0x2A2A2A), 0);
+    lv_obj_set_style_radius(widgets.container, 12, 0);
+    lv_obj_set_style_border_width(widgets.container, 2, 0);
+    lv_obj_set_style_border_color(widgets.container, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_pad_all(widgets.container, 10, 0);
+    lv_obj_clear_flag(widgets.container, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (click_callback) {
+        lv_obj_add_flag(widgets.container, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(widgets.container, click_callback, LV_EVENT_CLICKED, user_data);
+    }
+
+    // Server name (top)
+    widgets.lbl_name = lv_label_create(widgets.container);
+    lv_label_set_text(widgets.lbl_name, "---");
+    lv_obj_set_style_text_font(widgets.lbl_name, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(widgets.lbl_name, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_width(widgets.lbl_name, width - 24);
+    lv_label_set_long_mode(widgets.lbl_name, LV_LABEL_LONG_DOT);
+    lv_obj_align(widgets.lbl_name, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    // Player count (large, middle)
+    widgets.lbl_players = lv_label_create(widgets.container);
+    lv_label_set_text(widgets.lbl_players, "--/--");
+    lv_obj_set_style_text_font(widgets.lbl_players, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(widgets.lbl_players, COLOR_DAYZ_GREEN, 0);
+    lv_obj_align(widgets.lbl_players, LV_ALIGN_LEFT_MID, 0, 0);
+
+    // Day/night indicator (right side of players)
+    widgets.day_night_indicator = lv_label_create(widgets.container);
+    lv_label_set_text(widgets.day_night_indicator, LV_SYMBOL_IMAGE);  // Sun/moon icon
+    lv_obj_set_style_text_font(widgets.day_night_indicator, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(widgets.day_night_indicator, lv_color_hex(0xFFD700), 0);  // Yellow
+    lv_obj_align(widgets.day_night_indicator, LV_ALIGN_RIGHT_MID, -50, -10);
+
+    // Server time (next to day/night)
+    widgets.lbl_time = lv_label_create(widgets.container);
+    lv_label_set_text(widgets.lbl_time, "--:--");
+    lv_obj_set_style_text_font(widgets.lbl_time, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(widgets.lbl_time, COLOR_TEXT_SECONDARY, 0);
+    lv_obj_align(widgets.lbl_time, LV_ALIGN_RIGHT_MID, 0, -10);
+
+    // Trend indicator (bottom right)
+    widgets.lbl_trend = lv_label_create(widgets.container);
+    lv_label_set_text(widgets.lbl_trend, "---");
+    lv_obj_set_style_text_font(widgets.lbl_trend, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(widgets.lbl_trend, COLOR_TEXT_SECONDARY, 0);
+    lv_obj_align(widgets.lbl_trend, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+
+    return widgets;
+}
+
+lv_obj_t* ui_create_add_server_box(lv_obj_t *parent, int width, int height,
+                                    lv_event_cb_t click_callback) {
+    lv_obj_t *box = lv_obj_create(parent);
+    lv_obj_set_size(box, width, height);
+    lv_obj_set_style_bg_color(box, lv_color_hex(0x1E1E1E), 0);
+    lv_obj_set_style_radius(box, 12, 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_border_opa(box, LV_OPA_50, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (click_callback) {
+        lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(box, click_callback, LV_EVENT_CLICKED, NULL);
+    }
+
+    // Plus icon
+    lv_obj_t *icon = lv_label_create(box);
+    lv_label_set_text(icon, LV_SYMBOL_PLUS);
+    lv_obj_set_style_text_font(icon, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(icon, lv_color_hex(0x555555), 0);
+    lv_obj_align(icon, LV_ALIGN_CENTER, 0, -10);
+
+    // Text
+    lv_obj_t *lbl = lv_label_create(box);
+    lv_label_set_text(lbl, "Add Server");
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0x555555), 0);
+    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 20);
+
+    return box;
+}
+
+void ui_update_secondary_box(secondary_box_widgets_t *widgets, const char *name,
+                              int players, int max_players, const char *server_time,
+                              bool is_daytime, int trend_delta, bool valid) {
+    if (!widgets || !widgets->container) return;
+
+    // Update name
+    if (widgets->lbl_name) {
+        lv_label_set_text(widgets->lbl_name, name ? name : "---");
+    }
+
+    // Update player count
+    if (widgets->lbl_players) {
+        if (valid && players >= 0) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%d/%d", players, max_players);
+            lv_label_set_text(widgets->lbl_players, buf);
+
+            // Color code based on player count using existing helper
+            lv_obj_set_style_text_color(widgets->lbl_players, ui_get_player_color(players), 0);
+        } else {
+            lv_label_set_text(widgets->lbl_players, "--/--");
+            lv_obj_set_style_text_color(widgets->lbl_players, COLOR_TEXT_SECONDARY, 0);
+        }
+    }
+
+    // Update server time
+    if (widgets->lbl_time) {
+        if (valid && server_time && server_time[0]) {
+            lv_label_set_text(widgets->lbl_time, server_time);
+        } else {
+            lv_label_set_text(widgets->lbl_time, "--:--");
+        }
+    }
+
+    // Update day/night indicator
+    if (widgets->day_night_indicator) {
+        if (valid) {
+            if (is_daytime) {
+                lv_label_set_text(widgets->day_night_indicator, LV_SYMBOL_IMAGE);  // Sun
+                lv_obj_set_style_text_color(widgets->day_night_indicator, lv_color_hex(0xFFD700), 0);
+            } else {
+                lv_label_set_text(widgets->day_night_indicator, LV_SYMBOL_IMAGE);  // Moon
+                lv_obj_set_style_text_color(widgets->day_night_indicator, lv_color_hex(0x6B8EAD), 0);
+            }
+        } else {
+            lv_label_set_text(widgets->day_night_indicator, "");
+        }
+    }
+
+    // Update trend
+    if (widgets->lbl_trend) {
+        if (valid && trend_delta != 0) {
+            char buf[16];
+            if (trend_delta > 0) {
+                snprintf(buf, sizeof(buf), LV_SYMBOL_UP "+%d", trend_delta);
+                lv_obj_set_style_text_color(widgets->lbl_trend, COLOR_DAYZ_GREEN, 0);
+            } else {
+                snprintf(buf, sizeof(buf), LV_SYMBOL_DOWN "%d", trend_delta);
+                lv_obj_set_style_text_color(widgets->lbl_trend, COLOR_DANGER, 0);
+            }
+            lv_label_set_text(widgets->lbl_trend, buf);
+        } else {
+            lv_label_set_text(widgets->lbl_trend, "---");
+            lv_obj_set_style_text_color(widgets->lbl_trend, COLOR_TEXT_SECONDARY, 0);
+        }
+    }
+
+    // Update border color based on validity
+    if (valid) {
+        lv_obj_set_style_border_color(widgets->container, COLOR_DAYZ_GREEN, 0);
+        lv_obj_set_style_border_opa(widgets->container, LV_OPA_50, 0);
+    } else {
+        lv_obj_set_style_border_color(widgets->container, lv_color_hex(0x404040), 0);
+        lv_obj_set_style_border_opa(widgets->container, LV_OPA_100, 0);
+    }
+}

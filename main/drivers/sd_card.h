@@ -37,4 +37,18 @@ bool sd_card_is_mounted(void);
  */
 void sd_card_deinit(void);
 
+/**
+ * Get SD card space information
+ * @param total_mb Output: total space in MB
+ * @param free_mb Output: free space in MB
+ * @return ESP_OK on success, error if SD not mounted
+ */
+esp_err_t sd_card_get_space(uint32_t *total_mb, uint32_t *free_mb);
+
+/**
+ * Get SD card usage percentage
+ * @return Percentage used (0-100), or -1 if SD not mounted
+ */
+int sd_card_get_usage_percent(void);
+
 #endif // SD_CARD_H

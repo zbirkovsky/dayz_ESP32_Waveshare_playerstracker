@@ -48,6 +48,26 @@ typedef struct {
     int16_t player_count;           // Player count (-1 if unknown)
 } history_entry_t;
 
+// Trend tracking data (ring buffer for ~2 hour trend)
+typedef struct {
+    int16_t player_counts[TREND_HISTORY_SIZE];
+    uint32_t timestamps[TREND_HISTORY_SIZE];
+    uint8_t head;
+    uint8_t count;
+} trend_data_t;
+
+// Secondary server runtime status
+typedef struct {
+    int player_count;               // Current players (-1 = unknown)
+    int max_players;                // Max capacity
+    char server_time[16];           // In-game time
+    bool is_daytime;                // Day/night indicator
+    bool valid;                     // True if data is valid
+    bool fetch_pending;             // True if fetch in progress
+    int64_t last_update_time;       // Timestamp of last fetch (ms)
+    trend_data_t trend;             // Trend tracking data
+} secondary_server_status_t;
+
 // History file header structure
 typedef struct {
     uint32_t magic;                 // HISTORY_FILE_MAGIC
@@ -103,6 +123,14 @@ typedef struct {
     bool wifi_connected;
     volatile bool refresh_requested;
     connection_health_t connection;
+
+    // Main server trend tracking
+    trend_data_t main_trend;
+
+    // Multi-server watch data
+    secondary_server_status_t secondary[MAX_SECONDARY_SERVERS];
+    uint8_t secondary_server_indices[MAX_SECONDARY_SERVERS];  // Which servers are shown
+    uint8_t secondary_count;                                   // How many secondary slots filled
 } runtime_state_t;
 
 // UI state
@@ -200,5 +228,60 @@ screen_id_t app_state_get_current_screen(void);
  * Set current screen ID (thread-safe)
  */
 void app_state_set_current_screen(screen_id_t screen);
+
+// ============== MULTI-SERVER WATCH API ==============
+
+/**
+ * Recalculate which servers are shown as secondary
+ * Call after changing active server or server list
+ */
+void app_state_update_secondary_indices(void);
+
+/**
+ * Update secondary server status from API response
+ * @param slot Secondary slot index (0-2)
+ * @param players Player count
+ * @param max_players Max capacity
+ * @param server_time In-game time string
+ * @param is_daytime Day/night indicator
+ */
+void app_state_update_secondary_status(int slot, int players, int max_players,
+                                        const char *server_time, bool is_daytime);
+
+/**
+ * Add a trend data point for a secondary server
+ * @param slot Secondary slot index (0-2)
+ * @param player_count Current player count
+ */
+void app_state_add_trend_point(int slot, int player_count);
+
+/**
+ * Calculate trend delta over ~2 hours for a secondary server
+ * @param slot Secondary slot index (0-2)
+ * @return Player count change (positive=joining, negative=leaving)
+ */
+int app_state_calculate_trend(int slot);
+
+/**
+ * Add a trend data point for the main (active) server
+ * @param player_count Current player count
+ */
+void app_state_add_main_trend_point(int player_count);
+
+/**
+ * Calculate trend delta over ~2 hours for the main server
+ * @return Player count change (positive=joining, negative=leaving)
+ */
+int app_state_calculate_main_trend(void);
+
+/**
+ * Clear main server trend data (call when switching active server)
+ */
+void app_state_clear_main_trend(void);
+
+/**
+ * Clear secondary server data (call when switching active server)
+ */
+void app_state_clear_secondary_data(void);
 
 #endif // APP_STATE_H

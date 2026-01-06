@@ -10,6 +10,7 @@ idf_component_register(
         "services/battlemetrics.c"
         "services/settings_store.c"
         "services/history_store.c"
+        "services/secondary_fetch.c"
         "ui/ui_styles.c"
         "ui/ui_widgets.c"
     INCLUDE_DIRS
