@@ -8,7 +8,7 @@
 
 // ============== APPLICATION CONSTANTS ==============
 #define APP_NAME            "DayZ Server Monitor"
-#define APP_VERSION         "2.1.0"
+#define APP_VERSION         "2.2.0"
 
 #define MAX_SERVERS         5
 #define MAX_HISTORY_ENTRIES 10080   // 7 days at 1 min intervals
@@ -68,6 +68,11 @@
 #define CH422G_EXIO1_BIT    (1 << 1)    // GT911 touch reset pin (TP_RST)
 #define CH422G_EXIO2_BIT    (1 << 2)    // LCD backlight control
 #define CH422G_EXIO4_BIT    (1 << 4)    // SD_CS pin
+#define CH422G_EXIO5_BIT    (1 << 5)    // USB_SEL: Low=USB, High=CAN
+
+// ============== USB OTG CONFIGURATION ==============
+#define USB_DP_PIN          GPIO_NUM_20     // USB D+
+#define USB_DN_PIN          GPIO_NUM_19     // USB D-
 
 // ============== BUZZER CONFIGURATION ==============
 #define BUZZER_PIN          GPIO_NUM_6  // SENSOR AD pin on Waveshare board
@@ -100,15 +105,16 @@
 #define BATTLEMETRICS_API_BASE      "https://api.battlemetrics.com/servers/"
 
 // ============== UI TIMING ==============
-#define ALERT_AUTO_HIDE_MS      10000
-#define UI_LOCK_TIMEOUT_MS      100
-#define LVGL_TASK_PRIORITY      4
-#define LVGL_TASK_STACK         8192
+#define ALERT_AUTO_HIDE_MS          10000
+#define UI_LOCK_TIMEOUT_MS          100
+#define LVGL_TASK_PRIORITY          4
+#define LVGL_TASK_STACK             8192
+#define SCREEN_OFF_LONG_PRESS_MS    2000    // Hold screen for 2s to turn off
 
 // ============== MULTI-SERVER WATCH ==============
 #define MAX_SECONDARY_SERVERS       3       // Show up to 3 secondary servers
 #define SECONDARY_REFRESH_SEC       120     // Fetch secondary servers every 2 minutes
-#define TREND_HISTORY_SIZE          4       // Store 4 data points for trend calculation
+#define TREND_HISTORY_SIZE          240     // Store 240 data points (~2 hours at 30-sec refresh)
 #define TREND_WINDOW_SEC            7200    // 2 hour trend window
 
 // Compacted main card layout (edge-to-edge vertical)

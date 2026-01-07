@@ -263,6 +263,8 @@ void app_state_add_main_trend_point(int player_count) {
             trend->count++;
         }
 
+        ESP_LOGI(TAG, "Trend: added %d players, count=%d", player_count, trend->count);
+
         app_state_unlock();
     }
 }
@@ -297,6 +299,12 @@ int app_state_calculate_main_trend(void) {
 
             if (oldest_idx >= 0 && newest_idx >= 0 && oldest_idx != newest_idx) {
                 delta = trend->player_counts[newest_idx] - trend->player_counts[oldest_idx];
+                ESP_LOGI(TAG, "Trend calc: oldest[%d]=%d, newest[%d]=%d, delta=%d",
+                         oldest_idx, trend->player_counts[oldest_idx],
+                         newest_idx, trend->player_counts[newest_idx], delta);
+            } else {
+                ESP_LOGD(TAG, "Trend calc: not enough distinct points (oldest=%d, newest=%d)",
+                         oldest_idx, newest_idx);
             }
         }
 
@@ -304,6 +312,15 @@ int app_state_calculate_main_trend(void) {
     }
 
     return delta;
+}
+
+int app_state_get_main_trend_count(void) {
+    int count = 0;
+    if (app_state_lock(100)) {
+        count = g_state.runtime.main_trend.count;
+        app_state_unlock();
+    }
+    return count;
 }
 
 void app_state_clear_main_trend(void) {

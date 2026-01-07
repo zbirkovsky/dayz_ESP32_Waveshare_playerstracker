@@ -337,14 +337,65 @@ void history_switch_server(int old_server_index, int new_server_index) {
     // Clear in-memory history
     history_clear();
 
-    // Load new server's history (try SD first, then NVS)
+    // Load new server's history (try SD binary first, then NVS)
     if (sd_card_is_mounted()) {
         history_load_from_sd(new_server_index);
     }
 
-    // If no data loaded from SD, try NVS
+    // If no data loaded from SD binary, try NVS
     if (state->history.count == 0) {
         history_load_from_nvs(new_server_index);
+    }
+
+    // Also load recent data from JSON files (may have more recent data from secondary tracking)
+    if (sd_card_is_mounted()) {
+        time_t now;
+        time(&now);
+        uint32_t end_time = (uint32_t)now;
+        uint32_t start_time = end_time - 604800;  // Last 7 days
+
+        // Allocate temp buffer for JSON entries
+        history_entry_t *json_entries = malloc(MAX_HISTORY_ENTRIES * sizeof(history_entry_t));
+        if (json_entries) {
+            int json_count = history_load_range_json(new_server_index, start_time, end_time,
+                                                      json_entries, MAX_HISTORY_ENTRIES);
+            if (json_count > 0) {
+                ESP_LOGI(TAG, "Merging %d entries from JSON history", json_count);
+
+                // Merge JSON entries with existing history
+                // Find the latest timestamp in current history
+                uint32_t latest_ts = 0;
+                for (int i = 0; i < state->history.count; i++) {
+                    history_entry_t entry;
+                    if (history_get_entry(i, &entry) == 0 && entry.timestamp > latest_ts) {
+                        latest_ts = entry.timestamp;
+                    }
+                }
+
+                // Add JSON entries that are newer than existing history
+                if (app_state_lock(100)) {
+                    int added = 0;
+                    for (int i = 0; i < json_count; i++) {
+                        // Only add if newer than existing data (or if no existing data)
+                        if (json_entries[i].timestamp > latest_ts ||
+                            (latest_ts == 0 && state->history.count < MAX_HISTORY_ENTRIES)) {
+                            state->history.entries[state->history.head] = json_entries[i];
+                            state->history.head = (state->history.head + 1) % MAX_HISTORY_ENTRIES;
+                            if (state->history.count < MAX_HISTORY_ENTRIES) {
+                                state->history.count++;
+                            }
+                            added++;
+                        }
+                    }
+                    app_state_unlock();
+
+                    if (added > 0) {
+                        ESP_LOGI(TAG, "Added %d new entries from JSON", added);
+                    }
+                }
+            }
+            free(json_entries);
+        }
     }
 
     ESP_LOGI(TAG, "History switched to server %d (%d entries)", new_server_index, state->history.count);

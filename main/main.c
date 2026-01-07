@@ -37,6 +37,7 @@
 #include "services/secondary_fetch.h"
 #include "ui/ui_styles.h"
 #include "ui/ui_widgets.h"
+#include "drivers/usb_msc.h"
 
 static const char *TAG = "main";
 
@@ -379,7 +380,7 @@ static void on_history_clicked(lv_event_t *e) {
 }
 
 // Global touch handler for screensaver wake and activity tracking
-static void on_screen_touch(lv_event_t *e) {
+static void on_screen_touch_pressed(lv_event_t *e) {
     (void)e;
     app_state_t *state = app_state_get();
 
@@ -390,9 +391,19 @@ static void on_screen_touch(lv_event_t *e) {
     if (state->ui.screensaver_active) {
         display_set_backlight(true);
         state->ui.screensaver_active = false;
-        // Consume the touch event to prevent accidental button presses
-        lv_indev_wait_release(lv_indev_active());
+        state->ui.long_press_tracking = false;  // Don't start long-press tracking when waking
+    } else {
+        // Start tracking for potential long-press screen-off
+        state->ui.long_press_start_time = esp_timer_get_time() / 1000;
+        state->ui.long_press_tracking = true;
     }
+}
+
+// Touch release handler - stop long-press tracking
+static void on_screen_touch_released(lv_event_t *e) {
+    (void)e;
+    app_state_t *state = app_state_get();
+    state->ui.long_press_tracking = false;
 }
 
 static void on_back_clicked(lv_event_t *e) {
@@ -609,8 +620,9 @@ static void on_add_server_from_main_clicked(lv_event_t *e) {
 static void create_main_screen(void) {
     screen_main = ui_create_screen();
 
-    // Add global touch handler for screensaver activity tracking
-    lv_obj_add_event_cb(screen_main, on_screen_touch, LV_EVENT_PRESSED, NULL);
+    // Add global touch handlers for screensaver and long-press screen-off
+    lv_obj_add_event_cb(screen_main, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_main, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
 
     // Main card - compacted height for multi-server view
     main_card = ui_create_card(screen_main, 760, MAIN_CARD_HEIGHT_COMPACT);
@@ -752,7 +764,8 @@ static void create_settings_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_settings = ui_create_screen();
-    lv_obj_add_event_cb(screen_settings, on_screen_touch, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_settings, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_settings, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
     ui_create_back_button(screen_settings, on_back_clicked);
     ui_create_title(screen_settings, "Settings");
 
@@ -890,7 +903,8 @@ static void create_wifi_settings_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_wifi = ui_create_screen();
-    lv_obj_add_event_cb(screen_wifi, on_screen_touch, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_wifi, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_wifi, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
     ui_create_back_button(screen_wifi, on_back_clicked);
     ui_create_title(screen_wifi, "WiFi Settings");
 
@@ -914,7 +928,8 @@ static void create_server_settings_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_server = ui_create_screen();
-    lv_obj_add_event_cb(screen_server, on_screen_touch, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_server, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_server, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
     ui_create_back_button(screen_server, on_back_clicked);
     ui_create_title(screen_server, "Server Settings");
 
@@ -958,7 +973,8 @@ static void create_server_settings_screen(void) {
 
 static void create_add_server_screen(void) {
     screen_add_server = ui_create_screen();
-    lv_obj_add_event_cb(screen_add_server, on_screen_touch, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_add_server, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_add_server, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
     ui_create_back_button(screen_add_server, on_back_clicked);
     ui_create_title(screen_add_server, "Add Server");
 
@@ -981,7 +997,8 @@ static void create_history_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_history = ui_create_screen();
-    lv_obj_add_event_cb(screen_history, on_screen_touch, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_history, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_history, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
     ui_create_back_button(screen_history, on_back_clicked);
     ui_create_title(screen_history, "Player History");
 
@@ -1320,16 +1337,21 @@ static void update_ui(void) {
 
         // Main server trend (2h)
         int trend = app_state_calculate_main_trend();
-        if (trend != 0) {
+        int trend_count = app_state_get_main_trend_count();
+        if (trend > 0) {
             char trend_buf[16];
-            if (trend > 0) {
-                snprintf(trend_buf, sizeof(trend_buf), LV_SYMBOL_UP "+%d", trend);
-                lv_obj_set_style_text_color(lbl_main_trend, COLOR_DAYZ_GREEN, 0);
-            } else {
-                snprintf(trend_buf, sizeof(trend_buf), LV_SYMBOL_DOWN "%d", trend);
-                lv_obj_set_style_text_color(lbl_main_trend, COLOR_DANGER, 0);
-            }
+            snprintf(trend_buf, sizeof(trend_buf), LV_SYMBOL_UP "+%d", trend);
+            lv_obj_set_style_text_color(lbl_main_trend, COLOR_DAYZ_GREEN, 0);
             lv_label_set_text(lbl_main_trend, trend_buf);
+        } else if (trend < 0) {
+            char trend_buf[16];
+            snprintf(trend_buf, sizeof(trend_buf), LV_SYMBOL_DOWN "%d", trend);
+            lv_obj_set_style_text_color(lbl_main_trend, COLOR_DANGER, 0);
+            lv_label_set_text(lbl_main_trend, trend_buf);
+        } else if (trend_count >= 2) {
+            // Stable - show right arrow when we have enough data but no change
+            lv_obj_set_style_text_color(lbl_main_trend, COLOR_TEXT_MUTED, 0);
+            lv_label_set_text(lbl_main_trend, LV_SYMBOL_RIGHT " 0");
         } else {
             lv_label_set_text(lbl_main_trend, "");
         }
@@ -1568,6 +1590,17 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
+    // Check if screen is being touched during boot
+    // Touch and hold screen during power-on to enter USB storage mode
+    if (usb_msc_touch_detected()) {
+        ESP_LOGI(TAG, "Touch detected on boot - entering USB Mass Storage mode");
+        if (usb_msc_init() == ESP_OK) {
+            usb_msc_task();  // This function never returns
+        } else {
+            ESP_LOGE(TAG, "USB MSC init failed, continuing with normal boot");
+        }
+    }
+
     // Initialize application state
     app_state_init();
 
@@ -1702,6 +1735,48 @@ void app_main(void) {
                              elapsed_ms / 1000);
                     display_set_backlight(false);
                     state->ui.screensaver_active = true;
+                }
+            }
+
+            // Touch handling - wake from screensaver OR long-press to turn off
+            static bool wait_for_release = false;  // Wait for finger lift after long-press off
+            lv_indev_t *touch_indev = display_get_touch_indev();
+            if (touch_indev) {
+                if (lvgl_port_lock(10)) {
+                    lv_indev_state_t touch_state = lv_indev_get_state(touch_indev);
+                    lvgl_port_unlock();
+
+                    int64_t now = esp_timer_get_time() / 1000;
+
+                    if (touch_state == LV_INDEV_STATE_PRESSED) {
+                        // Wake from screensaver on any touch (but not if waiting for release)
+                        if (state->ui.screensaver_active && !wait_for_release) {
+                            ESP_LOGI(TAG, "Touch detected - waking from screensaver");
+                            display_set_backlight(true);
+                            state->ui.screensaver_active = false;
+                            state->ui.last_activity_time = now;
+                            state->ui.long_press_tracking = false;
+                        } else if (!state->ui.screensaver_active) {
+                            // Track long-press for screen-off
+                            state->ui.last_activity_time = now;
+                            if (!state->ui.long_press_tracking) {
+                                state->ui.long_press_start_time = now;
+                                state->ui.long_press_tracking = true;
+                            } else {
+                                int64_t press_duration = now - state->ui.long_press_start_time;
+                                if (press_duration >= SCREEN_OFF_LONG_PRESS_MS) {
+                                    ESP_LOGI(TAG, "Long-press screen-off triggered");
+                                    display_set_backlight(false);
+                                    state->ui.screensaver_active = true;
+                                    state->ui.long_press_tracking = false;
+                                    wait_for_release = true;  // Don't wake until finger lifted
+                                }
+                            }
+                        }
+                    } else {
+                        state->ui.long_press_tracking = false;
+                        wait_for_release = false;  // Finger lifted, allow wake on next touch
+                    }
                 }
             }
 

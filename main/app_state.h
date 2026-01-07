@@ -141,6 +141,8 @@ typedef struct {
     int64_t alert_start_time;
     bool screensaver_active;            // true = backlight off (screen saving)
     int64_t last_activity_time;         // Timestamp of last touch event
+    int64_t long_press_start_time;      // When touch press started (for 5s screen-off)
+    bool long_press_tracking;           // true = touch is currently held down
 } ui_state_t;
 
 // History state
@@ -273,6 +275,12 @@ void app_state_add_main_trend_point(int player_count);
  * @return Player count change (positive=joining, negative=leaving)
  */
 int app_state_calculate_main_trend(void);
+
+/**
+ * Get the number of trend data points collected for main server
+ * @return Number of data points (0 if no data)
+ */
+int app_state_get_main_trend_count(void);
 
 /**
  * Clear main server trend data (call when switching active server)

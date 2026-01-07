@@ -227,6 +227,13 @@ Uses the [BattleMetrics API](https://www.battlemetrics.com/developers/documentat
 
 ## Changelog
 
+### v2.2.0 - Trend Fixes & Secondary History
+- **Fixed 2-hour trend calculation**: Increased trend buffer from 4 to 240 data points
+- **Stable trend indicator**: Shows `→ 0` when player count is stable (instead of blank)
+- **Secondary server history**: All servers now record history even when shown as secondary
+- **Seamless history merge**: When switching secondary→primary, history is loaded from JSON files
+- **Debug logging**: Added trend calculation logging for troubleshooting
+
 ### v2.1.0 - Multi-Server Dashboard & JSON Storage
 - **Multi-Server Watch Dashboard**: View main server + up to 3 secondary servers simultaneously
 - **Trend Indicators**: Shows player count change over ~2 hours (↑/↓ with delta)

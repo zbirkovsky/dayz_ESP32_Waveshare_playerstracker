@@ -4,12 +4,15 @@
 
 #include "secondary_fetch.h"
 #include "battlemetrics.h"
+#include "history_store.h"
 #include "../app_state.h"
 #include "../config.h"
 #include "../events.h"
+#include "../drivers/sd_card.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <time.h>
 
 static const char *TAG = "secondary_fetch";
 
@@ -66,6 +69,13 @@ static void secondary_fetch_task(void *arg) {
                     app_state_update_secondary_status(slot, status.players, status.max_players,
                                                        status.server_time, status.is_daytime);
                     app_state_add_trend_point(slot, status.players);
+
+                    // Record history for secondary server (to SD card JSON)
+                    if (sd_card_is_mounted() && status.players >= 0) {
+                        time_t now;
+                        time(&now);
+                        history_append_entry_json(server_idx, (uint32_t)now, (int16_t)status.players);
+                    }
 
                     ESP_LOGI(TAG, "Slot %d (%s): %d/%d players, time=%s",
                              slot, server->display_name, status.players,
