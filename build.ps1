@@ -17,11 +17,7 @@ $idf = "C:\Espressif\frameworks\esp-idf-v5.5.1\tools\idf.py"
 
 Set-Location "C:\DayZ_servertracker"
 
-Write-Host "=== Setting target to ESP32-S3 ===" -ForegroundColor Green
-& $python $idf set-target esp32s3
-if ($LASTEXITCODE -ne 0) { Write-Host "Warning: set-target returned $LASTEXITCODE" -ForegroundColor Yellow }
-
-Write-Host "`n=== Building firmware ===" -ForegroundColor Green
+Write-Host "=== Building firmware ===" -ForegroundColor Green
 & $python $idf build
 if ($LASTEXITCODE -ne 0) { Write-Host "Error: build failed with code $LASTEXITCODE" -ForegroundColor Red; exit 1 }
 

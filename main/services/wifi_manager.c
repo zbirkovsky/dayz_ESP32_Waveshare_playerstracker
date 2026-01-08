@@ -3,8 +3,8 @@
  */
 
 #include "wifi_manager.h"
-#include "../config.h"
-#include "../app_state.h"
+#include "config.h"
+#include "app_state.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"

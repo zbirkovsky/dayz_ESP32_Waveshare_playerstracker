@@ -19,7 +19,9 @@ typedef struct {
     char ip_address[32];        // Server IP
     uint16_t port;              // Server port
     char server_name[64];       // Server name from API
+    char map_name[32];          // Map name (e.g., "chernarusplus", "enoch")
     bool online;                // Server online status
+    int rank;                   // Server rank (0 = unranked, lower = more popular)
 } server_status_t;
 
 /**

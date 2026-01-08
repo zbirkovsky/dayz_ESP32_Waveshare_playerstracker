@@ -28,9 +28,16 @@ void sd_card_set_cs(bool active);
 esp_err_t sd_card_init(void);
 
 /**
- * Check if SD card is mounted
+ * Check if SD card is mounted (with periodic access verification)
  */
 bool sd_card_is_mounted(void);
+
+/**
+ * Verify SD card is actually accessible (performs write test)
+ * Also updates mounted status if access fails
+ * @return true if SD card is accessible, false otherwise
+ */
+bool sd_card_verify_access(void);
 
 /**
  * Unmount SD card (if needed)

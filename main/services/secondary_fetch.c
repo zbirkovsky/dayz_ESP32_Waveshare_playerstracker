@@ -5,10 +5,10 @@
 #include "secondary_fetch.h"
 #include "battlemetrics.h"
 #include "history_store.h"
-#include "../app_state.h"
-#include "../config.h"
-#include "../events.h"
-#include "../drivers/sd_card.h"
+#include "app_state.h"
+#include "config.h"
+#include "events.h"
+#include "drivers/sd_card.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -67,7 +67,8 @@ static void secondary_fetch_task(void *arg) {
                 if (err == ESP_OK) {
                     // Update state
                     app_state_update_secondary_status(slot, status.players, status.max_players,
-                                                       status.server_time, status.is_daytime);
+                                                       status.server_time, status.is_daytime,
+                                                       status.map_name);
                     app_state_add_trend_point(slot, status.players);
 
                     // Record history for secondary server (to SD card JSON)
@@ -125,7 +126,7 @@ void secondary_fetch_start(void) {
     BaseType_t ret = xTaskCreate(
         secondary_fetch_task,
         "secondary_fetch",
-        4096,
+        8192,  // Increased from 4096 - needs more for HTTP + JSON
         NULL,
         3,  // Lower priority than main UI task
         &fetch_task_handle

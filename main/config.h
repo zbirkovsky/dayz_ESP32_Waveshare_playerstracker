@@ -87,8 +87,8 @@
 // ============== HISTORY STORAGE ==============
 #define HISTORY_FILE_MAGIC      0xDA120002  // Bumped version for per-server history
 #define HISTORY_FILE_PREFIX     "/sdcard/hist_"   // Will append server index, e.g. hist_0.bin
-#define NVS_HISTORY_MAX         200
-#define HISTORY_SAVE_INTERVAL   10          // Save every 10 new entries
+#define NVS_HISTORY_MAX         500         // ~42 hours at 5-min intervals (primary storage when SD fails)
+#define HISTORY_SAVE_INTERVAL   10          // Legacy (now using NVS_SAVE_INTERVAL in history_store.c)
 
 // ============== JSON STORAGE ==============
 #define HISTORY_JSON_DIR        "/sdcard/history"       // Root directory for JSON history
@@ -103,6 +103,11 @@
 
 // BattleMetrics API
 #define BATTLEMETRICS_API_BASE      "https://api.battlemetrics.com/servers/"
+
+// ============== UI STYLING ==============
+#define UI_CARD_RADIUS              12      // Standard card corner radius
+#define UI_BUTTON_RADIUS            25      // Round button radius
+#define UI_CHART_GRID_COLOR         0x444444
 
 // ============== UI TIMING ==============
 #define ALERT_AUTO_HIDE_MS          10000

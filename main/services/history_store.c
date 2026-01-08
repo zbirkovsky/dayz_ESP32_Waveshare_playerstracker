@@ -3,33 +3,88 @@
  */
 
 #include "history_store.h"
-#include "../config.h"
-#include "../drivers/sd_card.h"
+#include "storage_paths.h"
+#include "storage_backend.h"
+#include "config.h"
+#include "drivers/sd_card.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <errno.h>
+#include <unistd.h>  // For fsync
 #include "nvs.h"
 #include "esp_log.h"
+#include "cJSON.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "history_store";
 
-// Helper to build file path for a server
+// Track if root history directory was created successfully
+static bool g_history_dir_created = false;
+
+// Use storage_paths module for path building - wrapper functions for compatibility
 static void build_history_file_path(int server_index, char *path, size_t path_size) {
-    snprintf(path, path_size, "%s%d.bin", HISTORY_FILE_PREFIX, server_index);
+    storage_path_history_bin(server_index, path, path_size);
 }
 
-// Helper to build NVS key for a server
 static void build_nvs_key(int server_index, const char *suffix, char *key, size_t key_size) {
-    snprintf(key, key_size, "h%d_%s", server_index, suffix);
+    storage_nvs_key(server_index, suffix, key, key_size);
+}
+
+static void build_json_dir_path(int server_index, char *path, size_t path_size) {
+    storage_path_history_dir(server_index, path, path_size);
+}
+
+static void build_json_file_path(int server_index, const char *date_str, char *path, size_t path_size) {
+    storage_path_history_json(server_index, date_str, path, path_size);
+}
+
+static void timestamp_to_date_str(uint32_t ts, char *buf, size_t buf_size) {
+    storage_timestamp_to_date(ts, buf, buf_size);
 }
 
 void history_init(void) {
     // History buffer is allocated in app_state_init
     ESP_LOGI(TAG, "History store initialized");
+
+    // Pre-create the history directory structure if SD card is available
+    if (sd_card_is_mounted()) {
+        // Create root history directory
+        if (mkdir(HISTORY_JSON_DIR, 0755) == 0) {
+            g_history_dir_created = true;
+            ESP_LOGI(TAG, "Created history root directory: %s", HISTORY_JSON_DIR);
+        } else {
+            // Check if it already exists
+            struct stat st;
+            if (stat(HISTORY_JSON_DIR, &st) == 0 && S_ISDIR(st.st_mode)) {
+                g_history_dir_created = true;
+                ESP_LOGI(TAG, "History root directory exists: %s", HISTORY_JSON_DIR);
+            }
+        }
+
+        // Pre-create directories for all configured servers
+        if (g_history_dir_created) {
+            app_state_t *state = app_state_get();
+            for (int i = 0; i < state->settings.server_count; i++) {
+                if (state->settings.servers[i].active) {
+                    char server_dir[64];
+                    build_json_dir_path(i, server_dir, sizeof(server_dir));
+                    if (mkdir(server_dir, 0755) == 0) {
+                        ESP_LOGI(TAG, "Created server directory: %s", server_dir);
+                    }
+                    // Ignore errors - directory might already exist
+                }
+            }
+        }
+    }
 }
+
+// Save to NVS every 3 entries (more frequent than SD to ensure reliability)
+#define NVS_SAVE_INTERVAL 3
 
 void history_add_entry(int player_count) {
     app_state_t *state = app_state_get();
@@ -52,20 +107,27 @@ void history_add_entry(int player_count) {
 
     state->history.unsaved_count++;
     int server_idx = state->settings.active_server_index;
+    int current_count = state->history.count;
+    int unsaved = state->history.unsaved_count;
 
     app_state_unlock();
 
-    // Always append to JSON (primary storage)
+    ESP_LOGI(TAG, "History entry added: players=%d, total=%d, unsaved=%d",
+             player_count, current_count, unsaved);
+
+    // Try SD card first (if working)
     if (sd_card_is_mounted()) {
         history_append_entry_json(server_idx, timestamp, (int16_t)player_count);
     }
 
-    // Periodic save for the active server (binary backup + NVS)
-    if (state->history.unsaved_count >= HISTORY_SAVE_INTERVAL) {
+    // Save to NVS frequently (primary reliable storage when SD fails)
+    if (unsaved >= NVS_SAVE_INTERVAL) {
+        history_save_to_nvs(server_idx);
+
+        // Also do SD binary backup if available
         if (sd_card_is_mounted()) {
-            history_save_to_sd(server_idx);  // Binary backup
+            history_save_to_sd(server_idx);
         }
-        history_save_to_nvs(server_idx);  // NVS backup
     }
 }
 
@@ -121,13 +183,12 @@ void history_save_to_sd(int server_index) {
     char file_path[64];
     build_history_file_path(server_index, file_path, sizeof(file_path));
 
-    sd_card_set_cs(true);
+    // CS stays active permanently after mount - no toggling needed
 
     FILE *f = fopen(file_path, "wb");
     if (!f) {
         ESP_LOGE(TAG, "Failed to open history file for writing: %s", file_path);
-        sd_card_set_cs(false);
-        return;
+            return;
     }
 
     // Write header
@@ -146,7 +207,6 @@ void history_save_to_sd(int server_index) {
     }
 
     fclose(f);
-    sd_card_set_cs(false);
 
     state->history.unsaved_count = 0;
     ESP_LOGI(TAG, "History saved to SD for server %d (%d entries)", server_index, state->history.count);
@@ -163,13 +223,12 @@ void history_load_from_sd(int server_index) {
     char file_path[64];
     build_history_file_path(server_index, file_path, sizeof(file_path));
 
-    sd_card_set_cs(true);
+    // CS stays active permanently after mount - no toggling needed
 
     FILE *f = fopen(file_path, "rb");
     if (!f) {
         ESP_LOGI(TAG, "No history file found for server %d", server_index);
-        sd_card_set_cs(false);
-        return;
+            return;
     }
 
     // Read header
@@ -177,8 +236,7 @@ void history_load_from_sd(int server_index) {
     if (fread(&header, sizeof(header), 1, f) != 1 || header.magic != HISTORY_FILE_MAGIC) {
         ESP_LOGW(TAG, "Invalid history file header for server %d", server_index);
         fclose(f);
-        sd_card_set_cs(false);
-        return;
+            return;
     }
 
     // Read entries
@@ -204,7 +262,6 @@ void history_load_from_sd(int server_index) {
     }
 
     fclose(f);
-    sd_card_set_cs(false);
 
     ESP_LOGI(TAG, "History loaded from SD for server %d (%d entries)", server_index, state->history.count);
 }
@@ -326,28 +383,34 @@ void history_switch_server(int old_server_index, int new_server_index) {
 
     ESP_LOGI(TAG, "Switching history from server %d to server %d", old_server_index, new_server_index);
 
-    // Save current server's history (if we have one and there's data)
+    // ALWAYS save current server's history to NVS first (most reliable)
     if (old_server_index >= 0 && state->history.count > 0) {
+        ESP_LOGI(TAG, "Saving %d entries for server %d before switch", state->history.count, old_server_index);
+        history_save_to_nvs(old_server_index);  // NVS first - most reliable
+
+        // Also try SD if available
         if (sd_card_is_mounted()) {
             history_save_to_sd(old_server_index);
         }
-        history_save_to_nvs(old_server_index);
     }
 
     // Clear in-memory history
     history_clear();
 
-    // Load new server's history (try SD binary first, then NVS)
-    if (sd_card_is_mounted()) {
+    // Load new server's history - NVS FIRST (more reliable than SD)
+    ESP_LOGI(TAG, "Loading history for server %d from NVS...", new_server_index);
+    history_load_from_nvs(new_server_index);
+    int nvs_count = state->history.count;
+    ESP_LOGI(TAG, "Loaded %d entries from NVS", nvs_count);
+
+    // If NVS is empty, try SD binary backup
+    if (nvs_count == 0 && sd_card_is_mounted()) {
+        ESP_LOGI(TAG, "NVS empty, trying SD binary backup...");
         history_load_from_sd(new_server_index);
+        ESP_LOGI(TAG, "Loaded %d entries from SD binary", state->history.count);
     }
 
-    // If no data loaded from SD binary, try NVS
-    if (state->history.count == 0) {
-        history_load_from_nvs(new_server_index);
-    }
-
-    // Also load recent data from JSON files (may have more recent data from secondary tracking)
+    // Try to supplement with JSON data from SD (may have more entries)
     if (sd_card_is_mounted()) {
         time_t now;
         time(&now);
@@ -360,9 +423,8 @@ void history_switch_server(int old_server_index, int new_server_index) {
             int json_count = history_load_range_json(new_server_index, start_time, end_time,
                                                       json_entries, MAX_HISTORY_ENTRIES);
             if (json_count > 0) {
-                ESP_LOGI(TAG, "Merging %d entries from JSON history", json_count);
+                ESP_LOGI(TAG, "Found %d entries in JSON files", json_count);
 
-                // Merge JSON entries with existing history
                 // Find the latest timestamp in current history
                 uint32_t latest_ts = 0;
                 for (int i = 0; i < state->history.count; i++) {
@@ -423,26 +485,13 @@ const char* history_range_to_label(history_range_t range) {
 
 // ============== JSON HISTORY STORAGE ==============
 
-// Helper to build server directory path
-static void build_json_dir_path(int server_index, char *path, size_t path_size) {
-    snprintf(path, path_size, "%s/server_%d", HISTORY_JSON_DIR, server_index);
-}
+// Use wrapper functions that delegate to storage_paths module (defined at top of file)
 
-// Helper to build daily JSON file path
-static void build_json_file_path(int server_index, const char *date_str, char *path, size_t path_size) {
-    snprintf(path, path_size, "%s/server_%d/%s.jsonl", HISTORY_JSON_DIR, server_index, date_str);
-}
-
-// Helper to get date string from timestamp (YYYY-MM-DD)
-static void timestamp_to_date_str(uint32_t ts, char *buf, size_t buf_size) {
-    time_t t = (time_t)ts;
-    struct tm *tm_info = localtime(&t);
-    strftime(buf, buf_size, "%Y-%m-%d", tm_info);
-}
-
-// Helper to create directory if it doesn't exist
+// Helper to create directory if it doesn't exist (with retry)
 static esp_err_t ensure_directory(const char *path) {
     struct stat st;
+
+    // Try stat first - if it succeeds and is a directory, we're done
     if (stat(path, &st) == 0) {
         if (S_ISDIR(st.st_mode)) {
             return ESP_OK;
@@ -450,12 +499,23 @@ static esp_err_t ensure_directory(const char *path) {
         return ESP_FAIL;  // Exists but not a directory
     }
 
-    if (mkdir(path, 0755) == 0) {
-        ESP_LOGI(TAG, "Created directory: %s", path);
-        return ESP_OK;
+    // stat failed - try to create directory with retries
+    for (int retry = 0; retry < 3; retry++) {
+        if (mkdir(path, 0755) == 0) {
+            ESP_LOGI(TAG, "Created directory: %s", path);
+            return ESP_OK;
+        }
+
+        // Check if it was created by another task in the meantime
+        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            return ESP_OK;
+        }
+
+        // Small delay before retry
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    ESP_LOGE(TAG, "Failed to create directory: %s", path);
+    ESP_LOGE(TAG, "Failed to create directory after retries: %s", path);
     return ESP_FAIL;
 }
 
@@ -464,9 +524,21 @@ esp_err_t history_init_json_dir(int server_index) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    // Create root history directory
-    esp_err_t ret = ensure_directory(HISTORY_JSON_DIR);
-    if (ret != ESP_OK) return ret;
+    // Create root history directory (only try once if it failed before)
+    if (!g_history_dir_created) {
+        esp_err_t ret = ensure_directory(HISTORY_JSON_DIR);
+        if (ret == ESP_OK) {
+            g_history_dir_created = true;
+        } else {
+            // Try without relying on stat - just try mkdir directly
+            if (mkdir(HISTORY_JSON_DIR, 0755) == 0) {
+                g_history_dir_created = true;
+                ESP_LOGI(TAG, "Created history root directory on fallback");
+            } else {
+                return ret;
+            }
+        }
+    }
 
     // Create server-specific directory
     char server_dir[64];
@@ -475,31 +547,57 @@ esp_err_t history_init_json_dir(int server_index) {
 }
 
 esp_err_t history_append_entry_json(int server_index, uint32_t ts, int16_t players) {
+    ESP_LOGI(TAG, "JSON append called: server=%d ts=%lu players=%d", server_index, (unsigned long)ts, players);
+
     if (!sd_card_is_mounted()) {
+        ESP_LOGW(TAG, "JSON append: SD card not mounted");
         return ESP_ERR_INVALID_STATE;
     }
 
-    // Ensure directory exists
-    esp_err_t ret = history_init_json_dir(server_index);
-    if (ret != ESP_OK) return ret;
+    // Skip entries with invalid timestamp (SNTP not synced yet)
+    if (ts < 1700000000) {  // Before ~Nov 2023
+        ESP_LOGW(TAG, "Skipping entry with invalid timestamp: %lu", (unsigned long)ts);
+        return ESP_OK;
+    }
 
-    // Build file path for today
+    // Build paths
+    char server_dir[64];
+    build_json_dir_path(server_index, server_dir, sizeof(server_dir));
+
     char date_str[12];
     timestamp_to_date_str(ts, date_str, sizeof(date_str));
 
     char file_path[80];
     build_json_file_path(server_index, date_str, file_path, sizeof(file_path));
 
-    sd_card_set_cs(true);
+    // Create directories - always try mkdir (ignore if exists)
+    int ret1 = mkdir(HISTORY_JSON_DIR, 0755);
+    int e1 = errno;
+    ESP_LOGI(TAG, "mkdir(%s) ret=%d errno=%d", HISTORY_JSON_DIR, ret1, e1);
+
+    int ret2 = mkdir(server_dir, 0755);
+    int e2 = errno;
+    ESP_LOGI(TAG, "mkdir(%s) ret=%d errno=%d", server_dir, ret2, e2);
+
+    // Verify directories exist
+    struct stat st;
+    if (stat(HISTORY_JSON_DIR, &st) != 0) {
+        ESP_LOGE(TAG, "Root dir doesn't exist after mkdir: %s", HISTORY_JSON_DIR);
+        return ESP_FAIL;
+    }
+    if (stat(server_dir, &st) != 0) {
+        ESP_LOGE(TAG, "Server dir doesn't exist after mkdir: %s", server_dir);
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Opening file: %s", file_path);
 
     // Check if file exists (need to write header if new)
-    struct stat st;
     bool file_exists = (stat(file_path, &st) == 0);
 
     FILE *f = fopen(file_path, "a");
     if (!f) {
-        ESP_LOGE(TAG, "Failed to open JSON history file: %s", file_path);
-        sd_card_set_cs(false);
+        ESP_LOGE(TAG, "Failed to open: %s (errno=%d)", file_path, errno);
         return ESP_FAIL;
     }
 
@@ -516,9 +614,13 @@ esp_err_t history_append_entry_json(int server_index, uint32_t ts, int16_t playe
     // Append data entry (compact format)
     fprintf(f, "{\"t\":%lu,\"p\":%d}\n", (unsigned long)ts, (int)players);
 
-    fclose(f);
-    sd_card_set_cs(false);
+    // Force flush to disk
+    fflush(f);
+    fsync(fileno(f));
 
+    fclose(f);
+
+    ESP_LOGI(TAG, "JSON entry written: %s", file_path);
     return ESP_OK;
 }
 
@@ -531,13 +633,12 @@ int history_load_range_json(int server_index, uint32_t start_time, uint32_t end_
     char server_dir[64];
     build_json_dir_path(server_index, server_dir, sizeof(server_dir));
 
-    sd_card_set_cs(true);
+    // CS stays active permanently after mount - no toggling needed
 
     DIR *dir = opendir(server_dir);
     if (!dir) {
         ESP_LOGD(TAG, "No JSON history directory for server %d", server_index);
-        sd_card_set_cs(false);
-        return 0;
+            return 0;
     }
 
     int loaded = 0;
@@ -560,21 +661,26 @@ int history_load_range_json(int server_index, uint32_t start_time, uint32_t end_
 
         // Read line by line
         while (fgets(line_buf, sizeof(line_buf), f) && loaded < max_entries) {
-            // Skip header lines (contain "v" and "sid")
-            if (strstr(line_buf, "\"sid\"") != NULL) {
+            // Parse JSON line using cJSON
+            cJSON *json = cJSON_Parse(line_buf);
+            if (!json) {
+                continue;  // Skip invalid JSON lines
+            }
+
+            // Skip header lines (contain "sid")
+            cJSON *sid = cJSON_GetObjectItem(json, "sid");
+            if (sid) {
+                cJSON_Delete(json);
                 continue;
             }
 
             // Parse data line: {"t":timestamp,"p":players}
-            uint32_t ts = 0;
-            int16_t players = 0;
+            cJSON *ts_item = cJSON_GetObjectItem(json, "t");
+            cJSON *players_item = cJSON_GetObjectItem(json, "p");
 
-            char *t_ptr = strstr(line_buf, "\"t\":");
-            char *p_ptr = strstr(line_buf, "\"p\":");
-
-            if (t_ptr && p_ptr) {
-                ts = (uint32_t)strtoul(t_ptr + 4, NULL, 10);
-                players = (int16_t)atoi(p_ptr + 4);
+            if (ts_item && players_item && cJSON_IsNumber(ts_item) && cJSON_IsNumber(players_item)) {
+                uint32_t ts = (uint32_t)ts_item->valuedouble;
+                int16_t players = (int16_t)players_item->valueint;
 
                 // Filter by time range
                 if (ts >= start_time && ts <= end_time) {
@@ -583,13 +689,14 @@ int history_load_range_json(int server_index, uint32_t start_time, uint32_t end_
                     loaded++;
                 }
             }
+
+            cJSON_Delete(json);
         }
 
         fclose(f);
     }
 
     closedir(dir);
-    sd_card_set_cs(false);
 
     // Sort entries by timestamp (oldest first) using simple bubble sort
     // (should be mostly sorted already from files)
@@ -624,12 +731,11 @@ int history_cleanup_old_files(int server_index, int days_to_keep) {
     struct tm *tm_info = localtime(&cutoff);
     strftime(cutoff_date, sizeof(cutoff_date), "%Y-%m-%d", tm_info);
 
-    sd_card_set_cs(true);
+    // CS stays active permanently after mount - no toggling needed
 
     DIR *dir = opendir(server_dir);
     if (!dir) {
-        sd_card_set_cs(false);
-        return 0;
+            return 0;
     }
 
     int deleted = 0;
@@ -660,7 +766,6 @@ int history_cleanup_old_files(int server_index, int days_to_keep) {
     }
 
     closedir(dir);
-    sd_card_set_cs(false);
 
     if (deleted > 0) {
         ESP_LOGI(TAG, "Cleaned up %d old history files for server %d", deleted, server_index);
@@ -677,12 +782,11 @@ int history_get_json_file_count(int server_index) {
     char server_dir[64];
     build_json_dir_path(server_index, server_dir, sizeof(server_dir));
 
-    sd_card_set_cs(true);
+    // CS stays active permanently after mount - no toggling needed
 
     DIR *dir = opendir(server_dir);
     if (!dir) {
-        sd_card_set_cs(false);
-        return 0;
+            return 0;
     }
 
     int count = 0;
@@ -696,7 +800,6 @@ int history_get_json_file_count(int server_index) {
     }
 
     closedir(dir);
-    sd_card_set_cs(false);
 
     return count;
 }

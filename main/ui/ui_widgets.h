@@ -168,6 +168,82 @@ lv_obj_t* ui_create_screen(void);
  */
 lv_obj_t* ui_create_keyboard(lv_obj_t *parent, lv_obj_t *initial_textarea);
 
+// ============== SCREEN WIDGET CONTAINERS ==============
+
+/**
+ * Widget pointers for main screen
+ */
+typedef struct {
+    lv_obj_t *screen;               // Screen object
+    lv_obj_t *main_card;            // Main info card
+    lv_obj_t *img_map_bg;           // Background image
+    lv_obj_t *bg_overlay;           // Dark overlay
+    lv_obj_t *lbl_server;           // Server name
+    lv_obj_t *lbl_server_time;      // In-game time
+    lv_obj_t *lbl_map_name;         // Map name
+    lv_obj_t *day_night_indicator;  // Day/night icon
+    lv_obj_t *lbl_players;          // Player count
+    lv_obj_t *lbl_max;              // Max players
+    lv_obj_t *bar_players;          // Player bar
+    lv_obj_t *lbl_status;           // Status text
+    lv_obj_t *lbl_update;           // Last update time
+    lv_obj_t *lbl_ip;               // Server IP
+    lv_obj_t *lbl_restart;          // Restart countdown
+    lv_obj_t *lbl_main_trend;       // Trend indicator
+    lv_obj_t *lbl_rank;             // Server rank
+    lv_obj_t *lbl_sd_status;        // SD card status
+    lv_obj_t *btn_prev_server;      // Previous server button
+    lv_obj_t *btn_next_server;      // Next server button
+    lv_obj_t *secondary_container;  // Secondary servers container
+} main_screen_widgets_t;
+
+/**
+ * Widget pointers for history screen
+ */
+typedef struct {
+    lv_obj_t *screen;               // Screen object
+    lv_obj_t *chart;                // History chart
+    lv_chart_series_t *series;      // Chart data series
+    lv_obj_t *lbl_legend;           // Legend label
+    lv_obj_t *lbl_y_axis[5];        // Y-axis labels
+    lv_obj_t *lbl_x_axis[5];        // X-axis labels
+} history_screen_widgets_t;
+
+/**
+ * Widget pointers for settings screens
+ */
+typedef struct {
+    lv_obj_t *screen;               // Screen object
+    lv_obj_t *keyboard;             // On-screen keyboard
+} settings_screen_widgets_t;
+
+typedef struct {
+    lv_obj_t *screen;               // Screen object
+    lv_obj_t *keyboard;             // On-screen keyboard
+    lv_obj_t *ta_ssid;              // SSID text area
+    lv_obj_t *ta_password;          // Password text area
+} wifi_settings_widgets_t;
+
+typedef struct {
+    lv_obj_t *screen;               // Screen object
+    lv_obj_t *slider_alert;         // Alert threshold slider
+    lv_obj_t *lbl_alert_val;        // Alert threshold value label
+    lv_obj_t *sw_alerts;            // Alerts enabled switch
+    lv_obj_t *sw_restart_manual;    // Manual restart switch
+    lv_obj_t *roller_restart_hour;  // Restart hour roller
+    lv_obj_t *roller_restart_min;   // Restart minute roller
+    lv_obj_t *dropdown_restart_interval; // Restart interval dropdown
+    lv_obj_t *dropdown_map;         // Map selection dropdown
+} server_settings_widgets_t;
+
+typedef struct {
+    lv_obj_t *screen;               // Screen object
+    lv_obj_t *keyboard;             // On-screen keyboard
+    lv_obj_t *ta_server_id;         // Server ID text area
+    lv_obj_t *ta_server_name;       // Server name text area
+    lv_obj_t *dropdown_map;         // Map selection dropdown
+} add_server_widgets_t;
+
 // ============== MULTI-SERVER WATCH ==============
 
 /**
@@ -177,6 +253,7 @@ typedef struct {
     lv_obj_t *container;            // Main box container
     lv_obj_t *lbl_name;             // Server name label
     lv_obj_t *lbl_players;          // Player count label (e.g., "45/60")
+    lv_obj_t *lbl_map;              // Map name label
     lv_obj_t *lbl_time;             // Server time label
     lv_obj_t *lbl_trend;            // Trend label (e.g., "+12" or "-5")
     lv_obj_t *day_night_indicator;  // Day/night icon
@@ -211,13 +288,15 @@ lv_obj_t* ui_create_add_server_box(lv_obj_t *parent, int width, int height,
  * @param name Server name
  * @param players Current players
  * @param max_players Maximum players
+ * @param map_name Map name (will be formatted)
  * @param server_time Server time string
  * @param is_daytime true if daytime
  * @param trend_delta Trend delta (+ for joining, - for leaving)
  * @param valid true if data is valid
  */
 void ui_update_secondary_box(secondary_box_widgets_t *widgets, const char *name,
-                              int players, int max_players, const char *server_time,
-                              bool is_daytime, int trend_delta, bool valid);
+                              int players, int max_players, const char *map_name,
+                              const char *server_time, bool is_daytime,
+                              int trend_delta, bool valid);
 
 #endif // UI_WIDGETS_H

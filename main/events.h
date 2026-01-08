@@ -54,6 +54,7 @@ typedef struct {
 typedef struct {
     char server_id[32];
     char display_name[64];
+    char map_name[32];
 } server_add_data_t;
 
 typedef struct {
@@ -114,8 +115,9 @@ bool events_post_wifi_save(const char *ssid, const char *password);
  * Post a server add event
  * @param server_id BattleMetrics server ID
  * @param display_name Display name
+ * @param map_name Map name (e.g., "chernarusplus", "enoch")
  */
-bool events_post_server_add(const char *server_id, const char *display_name);
+bool events_post_server_add(const char *server_id, const char *display_name, const char *map_name);
 
 /**
  * Post an alert event

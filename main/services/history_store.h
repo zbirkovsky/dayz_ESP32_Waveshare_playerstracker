@@ -6,7 +6,7 @@
 #ifndef HISTORY_STORE_H
 #define HISTORY_STORE_H
 
-#include "../app_state.h"
+#include "app_state.h"
 #include "esp_err.h"
 
 /**

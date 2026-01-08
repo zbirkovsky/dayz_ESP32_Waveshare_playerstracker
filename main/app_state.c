@@ -25,7 +25,8 @@ void app_state_init(void) {
     // Initialize runtime defaults
     g_state.runtime.current_players = -1;
     g_state.runtime.max_players = DEFAULT_MAX_PLAYERS;
-    strcpy(g_state.runtime.last_update, "Never");
+    strncpy(g_state.runtime.last_update, "Never", sizeof(g_state.runtime.last_update) - 1);
+    g_state.runtime.last_update[sizeof(g_state.runtime.last_update) - 1] = '\0';
     g_state.runtime.server_time[0] = '\0';
     g_state.runtime.is_daytime = true;
     g_state.runtime.wifi_connected = false;
@@ -123,7 +124,8 @@ bool app_state_consume_refresh_request(void) {
 }
 
 void app_state_update_player_data(int players, int max_players,
-                                   const char *server_time, bool is_daytime) {
+                                   const char *server_time, bool is_daytime,
+                                   const char *map_name) {
     if (app_state_lock(100)) {
         g_state.runtime.current_players = players;
         if (max_players > 0) {
@@ -132,6 +134,11 @@ void app_state_update_player_data(int players, int max_players,
         if (server_time) {
             strncpy(g_state.runtime.server_time, server_time,
                     sizeof(g_state.runtime.server_time) - 1);
+        }
+        if (map_name) {
+            strncpy(g_state.runtime.map_name, map_name,
+                    sizeof(g_state.runtime.map_name) - 1);
+            g_state.runtime.map_name[sizeof(g_state.runtime.map_name) - 1] = '\0';
         }
         g_state.runtime.is_daytime = is_daytime;
         app_state_unlock();
@@ -168,7 +175,8 @@ void app_state_update_secondary_indices(void) {
 }
 
 void app_state_update_secondary_status(int slot, int players, int max_players,
-                                        const char *server_time, bool is_daytime) {
+                                        const char *server_time, bool is_daytime,
+                                        const char *map_name) {
     if (slot < 0 || slot >= MAX_SECONDARY_SERVERS) return;
 
     if (app_state_lock(100)) {
@@ -178,6 +186,10 @@ void app_state_update_secondary_status(int slot, int players, int max_players,
         if (server_time) {
             strncpy(sec->server_time, server_time, sizeof(sec->server_time) - 1);
             sec->server_time[sizeof(sec->server_time) - 1] = '\0';
+        }
+        if (map_name) {
+            strncpy(sec->map_name, map_name, sizeof(sec->map_name) - 1);
+            sec->map_name[sizeof(sec->map_name) - 1] = '\0';
         }
         sec->is_daytime = is_daytime;
         sec->valid = (players >= 0);

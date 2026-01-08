@@ -3,14 +3,17 @@
  */
 
 #include "sd_card.h"
-#include "../config.h"
+#include "config.h"
 #include "driver/i2c.h"
 #include "driver/spi_common.h"
 #include "driver/sdspi_host.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "ff.h"  // For f_getfree()
+#include <dirent.h>  // For opendir/readdir
+#include <stdio.h>   // For FILE operations
 
 static const char *TAG = "sd_card";
 
@@ -99,29 +102,112 @@ esp_err_t sd_card_init(void) {
     slot_config.gpio_cs = GPIO_NUM_NC;  // We control CS via CH422G
     slot_config.host_id = SPI2_HOST;
 
-    // Activate CS before mounting
+    // Activate CS before mounting and KEEP IT ACTIVE
+    // Since we use GPIO_NUM_NC, the ESP-IDF driver can't control CS itself
+    // We must keep CS active (LOW) permanently for SD card to work
     sd_card_set_cs(true);
 
     ret = esp_vfs_fat_sdspi_mount("/sdcard", &host, &slot_config, &mount_config, &sd_card);
 
-    sd_card_set_cs(false);
+    // DO NOT release CS - keep it active for all future operations
+    // sd_card_set_cs(false);  // REMOVED - was breaking SD communication
 
     if (ret != ESP_OK) {
+        sd_card_set_cs(false);  // Only release on failure
         ESP_LOGW(TAG, "SD card mount failed: %s", esp_err_to_name(ret));
         sd_mounted = false;
         return ret;
     }
 
-    sd_mounted = true;
-    ESP_LOGI(TAG, "SD card mounted successfully");
+    ESP_LOGI(TAG, "SD card mount returned OK, verifying actual access...");
 
     // Print card info
     sdmmc_card_print_info(stdout, sd_card);
 
+    // CRITICAL: Verify we can actually WRITE to the SD card
+    // Mount can succeed but file operations may fail (broken IO expander, etc)
+    FILE *test_file = fopen("/sdcard/.sd_write_test", "w");
+    if (!test_file) {
+        ESP_LOGE(TAG, "SD card mounted but WRITE TEST FAILED! Cannot create file.");
+        sd_card_set_cs(false);
+        sd_mounted = false;
+        return ESP_FAIL;
+    }
+
+    // Try to write something
+    int written = fprintf(test_file, "test");
+    fclose(test_file);
+
+    if (written <= 0) {
+        ESP_LOGE(TAG, "SD card mounted but WRITE TEST FAILED! Cannot write data.");
+        sd_card_set_cs(false);
+        sd_mounted = false;
+        return ESP_FAIL;
+    }
+
+    // Clean up test file
+    remove("/sdcard/.sd_write_test");
+
+    ESP_LOGI(TAG, "SD card write test PASSED - SD card is working!");
+    sd_mounted = true;
+
+    // List root directory contents
+    DIR *dir = opendir("/sdcard");
+    if (dir) {
+        ESP_LOGI(TAG, "=== SD Card Root Contents ===");
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            ESP_LOGI(TAG, "  %s %s", entry->d_type == DT_DIR ? "[DIR]" : "[FILE]", entry->d_name);
+        }
+        closedir(dir);
+        ESP_LOGI(TAG, "=============================");
+    }
+
     return ESP_OK;
 }
 
+// Track last verification time for periodic checks
+static int64_t last_verify_time = 0;
+#define SD_VERIFY_INTERVAL_SEC 30  // Re-verify every 30 seconds
+
+bool sd_card_verify_access(void) {
+    if (!sd_mounted) {
+        return false;
+    }
+
+    // Quick write test to verify SD card is actually accessible
+    FILE *test_file = fopen("/sdcard/.sd_verify", "w");
+    if (!test_file) {
+        ESP_LOGE(TAG, "SD card access FAILED - marking as unmounted!");
+        sd_mounted = false;
+        return false;
+    }
+
+    int written = fprintf(test_file, "v");
+    fclose(test_file);
+    remove("/sdcard/.sd_verify");
+
+    if (written <= 0) {
+        ESP_LOGE(TAG, "SD card write FAILED - marking as unmounted!");
+        sd_mounted = false;
+        return false;
+    }
+
+    return true;
+}
+
 bool sd_card_is_mounted(void) {
+    if (!sd_mounted) {
+        return false;
+    }
+
+    // Periodically verify actual SD card access
+    int64_t now = esp_timer_get_time() / 1000000;  // Convert to seconds
+    if (now - last_verify_time > SD_VERIFY_INTERVAL_SEC) {
+        last_verify_time = now;
+        return sd_card_verify_access();
+    }
+
     return sd_mounted;
 }
 

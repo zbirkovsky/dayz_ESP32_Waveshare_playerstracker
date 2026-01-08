@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <errno.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
@@ -35,11 +36,17 @@
 #include "services/settings_store.h"
 #include "services/history_store.h"
 #include "services/secondary_fetch.h"
+#include "services/restart_manager.h"
+#include "services/alert_manager.h"
 #include "ui/ui_styles.h"
 #include "ui/ui_widgets.h"
+#include "ui/map_background.h"
+#include "ui/screen_history.h"
 #include "drivers/usb_msc.h"
 
 static const char *TAG = "main";
+
+// ============== HELPER FUNCTIONS ==============
 
 // ============== UI WIDGET POINTERS ==============
 // Screen objects
@@ -52,9 +59,11 @@ static lv_obj_t *screen_history = NULL;
 
 // Main screen widgets
 static lv_obj_t *main_card = NULL;
-static lv_obj_t *lbl_title = NULL;
+static lv_obj_t *img_map_bg = NULL;           // Background image for map
+static lv_obj_t *bg_overlay = NULL;           // Dark overlay for text readability
 static lv_obj_t *lbl_server = NULL;
 static lv_obj_t *lbl_server_time = NULL;
+static lv_obj_t *lbl_map_name = NULL;
 static lv_obj_t *day_night_indicator = NULL;
 static lv_obj_t *lbl_players = NULL;
 static lv_obj_t *lbl_max = NULL;
@@ -64,10 +73,10 @@ static lv_obj_t *lbl_update = NULL;
 static lv_obj_t *lbl_ip = NULL;
 static lv_obj_t *lbl_restart = NULL;
 static lv_obj_t *lbl_main_trend = NULL;
+static lv_obj_t *lbl_rank = NULL;
 static lv_obj_t *lbl_sd_status = NULL;
 static lv_obj_t *btn_prev_server = NULL;
 static lv_obj_t *btn_next_server = NULL;
-static lv_obj_t *alert_overlay = NULL;
 
 // Settings widgets
 static lv_obj_t *kb = NULL;
@@ -86,11 +95,34 @@ static lv_obj_t *sw_restart_manual = NULL;
 static lv_obj_t *roller_restart_hour = NULL;
 static lv_obj_t *roller_restart_min = NULL;
 static lv_obj_t *dropdown_restart_interval = NULL;
+static lv_obj_t *dropdown_map = NULL;  // Map selection dropdown for Add Server
+static lv_obj_t *dropdown_map_settings = NULL;  // Map selection dropdown for Server Settings
+
+// Map options for dropdown (internal names used for storage)
+static const char *map_options_display = "Chernarus\nLivonia\nSakhal\nDeer Isle\nNamalsk\nEsseker\nTakistan\nBanov\nExclusion Zone\nOther";
+static const char *map_internal_names[] = {
+    "chernarusplus", "enoch", "sakhal", "deerisle", "namalsk",
+    "esseker", "takistan", "banov", "exclusionzone", ""
+};
+#define MAP_OPTIONS_COUNT (sizeof(map_internal_names) / sizeof(map_internal_names[0]))
+
+// Get dropdown index from internal map name
+static int get_map_index(const char *internal_name) {
+    if (!internal_name || internal_name[0] == '\0') return MAP_OPTIONS_COUNT - 1;  // "Other"
+    for (int i = 0; i < (int)(MAP_OPTIONS_COUNT - 1); i++) {
+        if (strcasecmp(internal_name, map_internal_names[i]) == 0) {
+            return i;
+        }
+    }
+    return MAP_OPTIONS_COUNT - 1;  // "Other"
+}
 
 // History widgets
 static lv_obj_t *chart_history = NULL;
 static lv_chart_series_t *chart_series = NULL;
 static lv_obj_t *lbl_history_legend = NULL;
+static lv_obj_t *lbl_y_axis[5] = {NULL};  // Y-axis labels: 0, 15, 30, 45, 60
+static lv_obj_t *lbl_x_axis[5] = {NULL};  // X-axis time labels
 
 // Multi-server watch widgets
 static lv_obj_t *secondary_container = NULL;
@@ -107,117 +139,9 @@ static void create_server_settings_screen(void);
 static void create_add_server_screen(void);
 static void create_history_screen(void);
 static void switch_to_screen(screen_id_t screen);
-static void refresh_history_chart(void);
-static void check_alerts(void);
-static void show_alert(const char *message, lv_color_t color);
-static void hide_alert(void);
 static void process_events(void);
 static void update_secondary_boxes(void);
 static void create_secondary_boxes(void);
-
-// ============== RESTART TRACKING ==============
-
-static void record_restart(server_config_t *srv, uint32_t timestamp) {
-    restart_history_t *rh = &srv->restart_history;
-
-    if (rh->last_restart_time > 0 &&
-        (timestamp - rh->last_restart_time) < MIN_RESTART_INTERVAL_SEC) {
-        ESP_LOGW(TAG, "Ignoring restart - too soon after last one");
-        return;
-    }
-
-    if (rh->restart_count < MAX_RESTART_HISTORY) {
-        rh->restart_times[rh->restart_count] = timestamp;
-        rh->restart_count++;
-    } else {
-        for (int i = 0; i < MAX_RESTART_HISTORY - 1; i++) {
-            rh->restart_times[i] = rh->restart_times[i + 1];
-        }
-        rh->restart_times[MAX_RESTART_HISTORY - 1] = timestamp;
-    }
-
-    rh->last_restart_time = timestamp;
-
-    if (rh->restart_count >= 2) {
-        uint32_t total_interval = 0;
-        for (int i = 1; i < rh->restart_count; i++) {
-            total_interval += rh->restart_times[i] - rh->restart_times[i - 1];
-        }
-        rh->avg_interval_sec = total_interval / (rh->restart_count - 1);
-        ESP_LOGI(TAG, "Server restart detected! Avg interval: %luh %lum",
-                 rh->avg_interval_sec / 3600, (rh->avg_interval_sec % 3600) / 60);
-    }
-
-    buzzer_alert_restart();
-}
-
-static void check_for_restart(server_config_t *srv, int current_count) {
-    restart_history_t *rh = &srv->restart_history;
-
-    if (rh->last_known_players >= RESTART_DETECT_MIN_PLAYERS &&
-        current_count == RESTART_DETECT_DROP_TO) {
-        time_t now;
-        time(&now);
-        record_restart(srv, (uint32_t)now);
-    }
-
-    rh->last_known_players = current_count;
-}
-
-static int get_restart_countdown(server_config_t *srv) {
-    time_t now;
-    time(&now);
-    struct tm timeinfo;
-    localtime_r(&now, &timeinfo);
-
-    if (srv->manual_restart_set && srv->restart_interval_hours > 0) {
-        int interval_sec = srv->restart_interval_hours * 3600;
-
-        struct tm restart_tm = timeinfo;
-        restart_tm.tm_hour = srv->restart_hour;
-        restart_tm.tm_min = srv->restart_minute;
-        restart_tm.tm_sec = 0;
-        time_t first_restart_today = mktime(&restart_tm);
-
-        time_t next_restart = first_restart_today;
-        while (next_restart <= now) {
-            next_restart += interval_sec;
-        }
-        while (next_restart > now + interval_sec) {
-            next_restart -= interval_sec;
-        }
-
-        int countdown = (int)(next_restart - now);
-        return countdown > 0 ? countdown : 0;
-    }
-
-    restart_history_t *rh = &srv->restart_history;
-    if (rh->restart_count >= 2 && rh->avg_interval_sec > 0) {
-        uint32_t predicted_next = rh->last_restart_time + rh->avg_interval_sec;
-        if ((uint32_t)now >= predicted_next) {
-            return 0;
-        }
-        return predicted_next - (uint32_t)now;
-    }
-
-    return -1;
-}
-
-static void format_countdown(int seconds, char *buf, size_t buf_size) {
-    if (seconds < 0) {
-        snprintf(buf, buf_size, "Unknown");
-    } else if (seconds == 0) {
-        snprintf(buf, buf_size, "Imminent!");
-    } else {
-        int hours = seconds / 3600;
-        int mins = (seconds % 3600) / 60;
-        if (hours > 0) {
-            snprintf(buf, buf_size, "~%dh %dm", hours, mins);
-        } else {
-            snprintf(buf, buf_size, "~%dm", mins);
-        }
-    }
-}
 
 // ============== SERVER QUERY ==============
 
@@ -240,7 +164,8 @@ static void query_server_status(void) {
     if (err == ESP_OK && status.players >= 0) {
         // Update runtime state
         app_state_update_player_data(status.players, status.max_players,
-                                      status.server_time, status.is_daytime);
+                                      status.server_time, status.is_daytime,
+                                      status.map_name);
 
         // Update server config if needed
         if (status.max_players > 0) {
@@ -250,6 +175,8 @@ static void query_server_status(void) {
             strncpy(srv->ip_address, status.ip_address, sizeof(srv->ip_address) - 1);
             srv->port = status.port;
         }
+        // Store server rank
+        state->runtime.server_rank = status.rank;
 
         // Update timestamp
         time_t now;
@@ -268,94 +195,15 @@ static void query_server_status(void) {
         app_state_add_main_trend_point(status.players);
 
         // Check for alerts
-        check_alerts();
+        alert_check();
 
         // Check for server restart
-        check_for_restart(srv, status.players);
+        restart_check_for_restart(srv, status.players);
     } else {
         ESP_LOGE(TAG, "Query failed: %s", battlemetrics_get_last_error());
     }
 }
 
-// ============== ALERTS ==============
-
-static void check_alerts(void) {
-    app_state_t *state = app_state_get();
-    server_config_t *srv = app_state_get_active_server();
-
-    if (!srv || !srv->alerts_enabled) return;
-
-    int players = state->runtime.current_players;
-    int max_p = state->runtime.max_players;
-
-    if (players >= max_p) {
-        if (!state->ui.alert_active) {
-            buzzer_alert_threshold();
-        }
-        show_alert("SERVER FULL!", COLOR_ALERT_RED);
-        return;
-    }
-
-    if (srv->alert_threshold > 0 && players >= srv->alert_threshold) {
-        if (!state->ui.alert_active) {
-            buzzer_alert_threshold();
-        }
-        char msg[64];
-        snprintf(msg, sizeof(msg), "ALERT: %d+ players!", srv->alert_threshold);
-        show_alert(msg, COLOR_ALERT_ORANGE);
-        return;
-    }
-
-    if (state->ui.alert_active) {
-        hide_alert();
-    }
-}
-
-static void show_alert(const char *message, lv_color_t color) {
-    app_state_t *state = app_state_get();
-
-    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
-
-    state->ui.alert_active = true;
-    state->ui.alert_start_time = esp_timer_get_time() / 1000;
-
-    if (alert_overlay) {
-        lv_obj_delete(alert_overlay);
-    }
-
-    alert_overlay = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(alert_overlay, LCD_WIDTH - 160, 60);
-    lv_obj_align(alert_overlay, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(alert_overlay, color, 0);
-    lv_obj_set_style_bg_opa(alert_overlay, LV_OPA_90, 0);
-    lv_obj_set_style_border_width(alert_overlay, 0, 0);
-    lv_obj_set_style_radius(alert_overlay, 0, 0);
-    lv_obj_clear_flag(alert_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_remove_flag(alert_overlay, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *lbl = lv_label_create(alert_overlay);
-    lv_label_set_text(lbl, message);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_center(lbl);
-
-    lvgl_port_unlock();
-}
-
-static void hide_alert(void) {
-    app_state_t *state = app_state_get();
-
-    if (!state->ui.alert_active) return;
-
-    if (lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) {
-        if (alert_overlay) {
-            lv_obj_delete(alert_overlay);
-            alert_overlay = NULL;
-        }
-        state->ui.alert_active = false;
-        lvgl_port_unlock();
-    }
-}
 
 // ============== UI CALLBACKS ==============
 
@@ -505,7 +353,6 @@ static void on_screen_off_changed(lv_event_t *e) {
 }
 
 static void on_alert_slider_changed(lv_event_t *e) {
-    app_state_t *state = app_state_get();
     server_config_t *srv = app_state_get_active_server();
     if (!srv) return;
 
@@ -571,8 +418,17 @@ static void on_restart_manual_switch_changed(lv_event_t *e) {
 static void on_server_save_clicked(lv_event_t *e) {
     (void)e;
     if (lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) {
+        // Get selected map from dropdown
+        const char *map_name = "";
+        if (dropdown_map) {
+            uint16_t map_idx = lv_dropdown_get_selected(dropdown_map);
+            if (map_idx < sizeof(map_internal_names) / sizeof(map_internal_names[0])) {
+                map_name = map_internal_names[map_idx];
+            }
+        }
         events_post_server_add(lv_textarea_get_text(ta_server_id),
-                               lv_textarea_get_text(ta_server_name));
+                               lv_textarea_get_text(ta_server_name),
+                               map_name);
         lvgl_port_unlock();
     }
 }
@@ -585,6 +441,26 @@ static void on_delete_server_clicked(lv_event_t *e) {
         .data.server_index = state->settings.active_server_index
     };
     events_post(&evt);
+}
+
+static void on_map_settings_changed(lv_event_t *e) {
+    (void)e;
+    if (!dropdown_map_settings) return;
+
+    uint16_t map_idx = lv_dropdown_get_selected(dropdown_map_settings);
+
+    if (map_idx < sizeof(map_internal_names) / sizeof(map_internal_names[0])) {
+        if (app_state_lock(100)) {
+            server_config_t *srv = app_state_get_active_server();
+            if (srv) {
+                strncpy(srv->map_name, map_internal_names[map_idx],
+                        sizeof(srv->map_name) - 1);
+                srv->map_name[sizeof(srv->map_name) - 1] = '\0';
+            }
+            app_state_unlock();
+            settings_save();
+        }
+    }
 }
 
 static void on_history_range_clicked(lv_event_t *e) {
@@ -602,7 +478,7 @@ static void on_history_range_clicked(lv_event_t *e) {
     }
     lv_obj_set_style_bg_color(btn, COLOR_DAYZ_GREEN, 0);
 
-    refresh_history_chart();
+    screen_history_refresh();
 }
 
 static void on_secondary_box_clicked(lv_event_t *e) {
@@ -630,6 +506,29 @@ static void create_main_screen(void) {
     lv_obj_add_flag(main_card, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(main_card, on_card_clicked, LV_EVENT_CLICKED, NULL);
 
+    // Background image for map (loaded from SD card)
+    img_map_bg = lv_img_create(main_card);
+    lv_obj_set_size(img_map_bg, 720, MAIN_CARD_HEIGHT_COMPACT - 20);
+    lv_obj_align(img_map_bg, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(img_map_bg, LV_OBJ_FLAG_HIDDEN);  // Hidden until image loaded
+    lv_img_set_zoom(img_map_bg, 256);  // 256 = 100% zoom
+    lv_obj_set_style_radius(img_map_bg, UI_CARD_RADIUS, 0);
+    lv_obj_add_flag(img_map_bg, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+
+    // Dark overlay for text readability (semi-transparent)
+    bg_overlay = lv_obj_create(main_card);
+    lv_obj_set_size(bg_overlay, 720, MAIN_CARD_HEIGHT_COMPACT - 20);
+    lv_obj_align(bg_overlay, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(bg_overlay, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(bg_overlay, LV_OPA_60, 0);  // 60% opacity
+    lv_obj_set_style_border_width(bg_overlay, 0, 0);
+    lv_obj_set_style_radius(bg_overlay, UI_CARD_RADIUS, 0);
+    lv_obj_add_flag(bg_overlay, LV_OBJ_FLAG_HIDDEN);  // Hidden until image loaded
+    lv_obj_clear_flag(bg_overlay, LV_OBJ_FLAG_CLICKABLE);
+
+    // Initialize map background manager
+    map_background_init(img_map_bg, bg_overlay);
+
     // Settings button
     ui_create_icon_button(screen_main, LV_SYMBOL_SETTINGS, 20, 10, on_settings_clicked);
 
@@ -654,7 +553,7 @@ static void create_main_screen(void) {
     lv_obj_set_size(btn_refresh, 110, 50);
     lv_obj_align(btn_refresh, LV_ALIGN_TOP_RIGHT, -20, 10);
     lv_obj_set_style_bg_color(btn_refresh, COLOR_BUTTON_PRIMARY, 0);
-    lv_obj_set_style_radius(btn_refresh, 25, 0);
+    lv_obj_set_style_radius(btn_refresh, UI_BUTTON_RADIUS, 0);
     lv_obj_add_event_cb(btn_refresh, on_refresh_clicked, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *lbl_refresh = lv_label_create(btn_refresh);
@@ -672,7 +571,14 @@ static void create_main_screen(void) {
     lv_obj_set_style_text_color(lbl_server, COLOR_TEXT_PRIMARY, 0);
     lv_obj_set_width(lbl_server, 450);
     lv_label_set_long_mode(lbl_server, LV_LABEL_LONG_DOT);
-    lv_obj_align(lbl_server, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_align(lbl_server, LV_ALIGN_LEFT_MID, 0, -8);
+
+    // Server rank below server name
+    lbl_rank = lv_label_create(server_row);
+    lv_label_set_text(lbl_rank, "");
+    lv_obj_set_style_text_font(lbl_rank, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_rank, COLOR_INFO, 0);
+    lv_obj_align(lbl_rank, LV_ALIGN_LEFT_MID, 0, 10);
 
     // Day/night + time on the right
     day_night_indicator = lv_obj_create(server_row);
@@ -687,7 +593,7 @@ static void create_main_screen(void) {
     lv_label_set_text(lbl_server_time, "");
     lv_obj_set_style_text_font(lbl_server_time, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_server_time, COLOR_TEXT_SECONDARY, 0);
-    lv_obj_align(lbl_server_time, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_align(lbl_server_time, LV_ALIGN_RIGHT_MID, 0, -6);
 
     // Players container with trend
     lv_obj_t *players_cont = ui_create_row(main_card, 550, 60);
@@ -755,6 +661,14 @@ static void create_main_screen(void) {
     lbl_ip = lv_label_create(main_card);
     lv_label_set_text(lbl_ip, "");
     lv_obj_add_flag(lbl_ip, LV_OBJ_FLAG_HIDDEN);
+
+    // Map name (on main_card directly, below day/night indicator area)
+    lbl_map_name = lv_label_create(main_card);
+    lv_label_set_text(lbl_map_name, "");
+    lv_obj_set_style_text_font(lbl_map_name, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(lbl_map_name, COLOR_TEXT_SECONDARY, 0);
+    lv_obj_align(lbl_map_name, LV_ALIGN_TOP_RIGHT, -10, 28);
+    lv_obj_move_foreground(lbl_map_name);  // Ensure it's on top
 
     // Create secondary server container
     create_secondary_boxes();
@@ -933,8 +847,8 @@ static void create_server_settings_screen(void) {
     ui_create_back_button(screen_server, on_back_clicked);
     ui_create_title(screen_server, "Server Settings");
 
-    lv_obj_t *list = ui_create_scroll_container(screen_server, 700, 300);
-    lv_obj_align(list, LV_ALIGN_CENTER, 0, -20);
+    lv_obj_t *list = ui_create_scroll_container(screen_server, 700, 250);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 50);
 
     for (int i = 0; i < state->settings.server_count; i++) {
         lv_obj_t *item = lv_obj_create(list);
@@ -959,6 +873,33 @@ static void create_server_settings_screen(void) {
         lv_obj_set_style_text_color(lbl_id, COLOR_TEXT_SECONDARY, 0);
         lv_obj_align(lbl_id, LV_ALIGN_RIGHT_MID, -10, 0);
     }
+
+    // Map selection for active server
+    lv_obj_t *map_row = ui_create_row(screen_server, 400, 50);
+    lv_obj_align(map_row, LV_ALIGN_BOTTOM_MID, 0, -80);
+    lv_obj_set_flex_flow(map_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(map_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *lbl_map = lv_label_create(map_row);
+    lv_label_set_text(lbl_map, "Map:");
+    lv_obj_set_style_text_font(lbl_map, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_map, COLOR_TEXT_PRIMARY, 0);
+
+    dropdown_map_settings = lv_dropdown_create(map_row);
+    lv_dropdown_set_options(dropdown_map_settings, map_options_display);
+    // Set current map
+    server_config_t *active_srv = app_state_get_active_server();
+    int map_idx = active_srv ? get_map_index(active_srv->map_name) : 0;
+    lv_dropdown_set_selected(dropdown_map_settings, map_idx);
+    lv_obj_set_size(dropdown_map_settings, 200, 40);
+    lv_obj_set_style_bg_color(dropdown_map_settings, COLOR_CARD_BG, 0);
+    lv_obj_set_style_text_color(dropdown_map_settings, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_border_color(dropdown_map_settings, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_border_width(dropdown_map_settings, 1, 0);
+    lv_obj_set_style_radius(dropdown_map_settings, 8, 0);
+    lv_obj_set_style_bg_color(dropdown_map_settings, COLOR_CARD_BG, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(dropdown_map_settings, COLOR_TEXT_PRIMARY, LV_PART_ITEMS);
+    lv_obj_add_event_cb(dropdown_map_settings, on_map_settings_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t *btn_add = ui_create_button(screen_server, "Add Server", LV_SYMBOL_PLUS,
                                           200, 50, COLOR_DAYZ_GREEN, on_add_server_clicked);
@@ -986,9 +927,30 @@ static void create_add_server_screen(void) {
                                            "e.g., My DayZ Server", "",
                                            50, 150, 400, false, on_add_server_textarea_clicked);
 
+    // Map selection dropdown
+    lv_obj_t *lbl_map = lv_label_create(screen_add_server);
+    lv_label_set_text(lbl_map, "Map:");
+    lv_obj_set_style_text_font(lbl_map, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_map, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_pos(lbl_map, 50, 230);
+
+    dropdown_map = lv_dropdown_create(screen_add_server);
+    lv_dropdown_set_options(dropdown_map, map_options_display);
+    lv_dropdown_set_selected(dropdown_map, 0);  // Default to Chernarus
+    lv_obj_set_size(dropdown_map, 200, 40);
+    lv_obj_set_pos(dropdown_map, 100, 225);
+    lv_obj_set_style_bg_color(dropdown_map, COLOR_CARD_BG, 0);
+    lv_obj_set_style_text_color(dropdown_map, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_border_color(dropdown_map, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_border_width(dropdown_map, 1, 0);
+    lv_obj_set_style_radius(dropdown_map, 8, 0);
+    // Style the dropdown list
+    lv_obj_set_style_bg_color(dropdown_map, COLOR_CARD_BG, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(dropdown_map, COLOR_TEXT_PRIMARY, LV_PART_ITEMS);
+
     lv_obj_t *btn_save = ui_create_button(screen_add_server, "Add", LV_SYMBOL_OK,
                                            150, 50, COLOR_DAYZ_GREEN, on_server_save_clicked);
-    lv_obj_align(btn_save, LV_ALIGN_TOP_RIGHT, -50, 150);
+    lv_obj_align(btn_save, LV_ALIGN_TOP_RIGHT, -50, 225);
 
     kb_add = ui_create_keyboard(screen_add_server, ta_server_id);
 }
@@ -1025,78 +987,71 @@ static void create_history_screen(void) {
         lv_obj_center(lbl);
     }
 
-    // Chart
+    // Chart - offset to make room for Y-axis labels on left
     chart_history = lv_chart_create(screen_history);
-    lv_obj_set_size(chart_history, 700, 310);
-    lv_obj_align(chart_history, LV_ALIGN_CENTER, 0, 35);
+    lv_obj_set_size(chart_history, 680, 280);
+    lv_obj_align(chart_history, LV_ALIGN_CENTER, 20, 20);
     lv_obj_set_style_bg_color(chart_history, COLOR_CARD_BG, 0);
     lv_obj_set_style_radius(chart_history, 15, 0);
     lv_obj_set_style_border_width(chart_history, 0, 0);
-    lv_obj_set_style_line_color(chart_history, lv_color_hex(0x444444), LV_PART_MAIN);
+    lv_obj_set_style_line_color(chart_history, lv_color_hex(UI_CHART_GRID_COLOR), LV_PART_MAIN);
+    lv_obj_set_style_pad_left(chart_history, 10, 0);
+    lv_obj_set_style_pad_right(chart_history, 10, 0);
+    lv_obj_set_style_pad_bottom(chart_history, 5, 0);
 
     lv_chart_set_type(chart_history, LV_CHART_TYPE_LINE);
-    lv_chart_set_range(chart_history, LV_CHART_AXIS_PRIMARY_Y, 0, 70);
-    lv_chart_set_div_line_count(chart_history, 5, 5);
+    lv_chart_set_range(chart_history, LV_CHART_AXIS_PRIMARY_Y, 0, 60);  // Initial range, updated dynamically
+    lv_chart_set_div_line_count(chart_history, 4, 4);  // 4 divisions = 5 lines
 
     chart_series = lv_chart_add_series(chart_history, COLOR_DAYZ_GREEN, LV_CHART_AXIS_PRIMARY_Y);
+
+    // Y-axis labels (will be updated dynamically by refresh_history_chart)
+    // Chart is 680x280 centered at (420, 260), so top=120, bottom=400
+    lv_coord_t chart_top = 120;
+    lv_coord_t chart_plot_height = 270;  // Approximate plot area height
+    for (int i = 0; i < 5; i++) {
+        lbl_y_axis[i] = lv_label_create(screen_history);
+        lv_label_set_text(lbl_y_axis[i], "--");  // Will be set by refresh_history_chart
+        lv_obj_set_style_text_font(lbl_y_axis[i], &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl_y_axis[i], COLOR_TEXT_MUTED, 0);
+        // Position from top to bottom along left side of chart
+        lv_obj_set_pos(lbl_y_axis[i], 50, chart_top + (i * chart_plot_height / 4) - 7);
+    }
+
+    // X-axis time labels (will be updated by refresh_history_chart)
+    // Chart left edge = 80, plot area with padding starts at ~90
+    lv_coord_t chart_left = 90;
+    lv_coord_t chart_width = 660;  // Plot area width
+    lv_coord_t x_label_y = 410;  // Below chart bottom (400) with margin
+    for (int i = 0; i < 5; i++) {
+        lbl_x_axis[i] = lv_label_create(screen_history);
+        lv_label_set_text(lbl_x_axis[i], "--:--");
+        lv_obj_set_style_text_font(lbl_x_axis[i], &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl_x_axis[i], COLOR_TEXT_MUTED, 0);
+        // Position from left to right along bottom
+        lv_coord_t x_pos = chart_left + (i * chart_width / 4) - 18;
+        lv_obj_set_pos(lbl_x_axis[i], x_pos, x_label_y);
+    }
 
     // Legend
     lbl_history_legend = lv_label_create(screen_history);
     lv_obj_set_style_text_font(lbl_history_legend, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_history_legend, COLOR_TEXT_MUTED, 0);
-    lv_obj_align(lbl_history_legend, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_align(lbl_history_legend, LV_ALIGN_BOTTOM_MID, 0, -5);
 
-    refresh_history_chart();
-}
-
-static void refresh_history_chart(void) {
-    app_state_t *state = app_state_get();
-
-    if (!chart_history || !chart_series) return;
-
-    time_t now;
-    time(&now);
-    uint32_t range_seconds = history_range_to_seconds(state->ui.current_history_range);
-    uint32_t cutoff_time = (uint32_t)now - range_seconds;
-
-    int entries_in_range = 0;
-    int total_count = history_get_count();
-
-    for (int i = 0; i < total_count; i++) {
-        history_entry_t entry;
-        if (history_get_entry(i, &entry) == 0 && entry.timestamp >= cutoff_time) {
-            entries_in_range++;
-        }
+    // Initialize history screen module with widget references
+    static history_screen_widgets_t history_widgets;
+    history_widgets.screen = screen_history;
+    history_widgets.chart = chart_history;
+    history_widgets.series = chart_series;
+    history_widgets.lbl_legend = lbl_history_legend;
+    for (int i = 0; i < 5; i++) {
+        history_widgets.lbl_y_axis[i] = lbl_y_axis[i];
+        history_widgets.lbl_x_axis[i] = lbl_x_axis[i];
     }
+    screen_history_init(&history_widgets);
 
-    int display_points = (entries_in_range > 120) ? 120 : (entries_in_range > 0 ? entries_in_range : 1);
-    int sample_rate = (entries_in_range > 120) ? (entries_in_range / 120) : 1;
-
-    lv_chart_set_point_count(chart_history, display_points);
-    lv_chart_set_all_value(chart_history, chart_series, LV_CHART_POINT_NONE);
-
-    int chart_idx = 0;
-    int sample_counter = 0;
-
-    for (int i = 0; i < total_count && chart_idx < display_points; i++) {
-        history_entry_t entry;
-        if (history_get_entry(i, &entry) == 0 &&
-            entry.timestamp >= cutoff_time && entry.player_count >= 0) {
-            if (sample_counter % sample_rate == 0) {
-                lv_chart_set_value_by_id(chart_history, chart_series, chart_idx++, entry.player_count);
-            }
-            sample_counter++;
-        }
-    }
-
-    lv_chart_refresh(chart_history);
-
-    if (lbl_history_legend) {
-        char legend_text[64];
-        snprintf(legend_text, sizeof(legend_text), "%s (%d readings)",
-                 history_range_to_label(state->ui.current_history_range), entries_in_range);
-        lv_label_set_text(lbl_history_legend, legend_text);
-    }
+    screen_history_refresh();
 }
 
 // ============== SECONDARY SERVER WATCH ==============
@@ -1173,12 +1128,21 @@ static void update_secondary_boxes(void) {
             // Calculate trend
             int trend = app_state_calculate_trend(slot);
 
+            // Determine map to display - prefer stored config, fallback to API
+            const char *map_to_show = "";
+            if (strlen(srv->map_name) > 0) {
+                map_to_show = srv->map_name;
+            } else if (strlen(status->map_name) > 0) {
+                map_to_show = status->map_name;
+            }
+
             // Update the box
             ui_update_secondary_box(
                 &secondary_boxes[slot],
                 srv->display_name,
                 status->player_count,
                 status->max_players > 0 ? status->max_players : srv->max_players,
+                map_format_name(map_to_show),
                 status->server_time,
                 status->is_daytime,
                 trend,
@@ -1239,6 +1203,11 @@ static void switch_to_screen(screen_id_t screen) {
         screen_history = NULL;
         chart_history = NULL;
         chart_series = NULL;
+        lbl_history_legend = NULL;
+        for (int i = 0; i < 5; i++) {
+            lbl_y_axis[i] = NULL;
+            lbl_x_axis[i] = NULL;
+        }
     }
 
     app_state_set_current_screen(screen);
@@ -1299,6 +1268,15 @@ static void update_ui(void) {
         }
     }
 
+    // Server rank
+    if (state->runtime.server_rank > 0) {
+        char rank_buf[24];
+        snprintf(rank_buf, sizeof(rank_buf), "Rank #%d", state->runtime.server_rank);
+        lv_label_set_text(lbl_rank, rank_buf);
+    } else {
+        lv_label_set_text(lbl_rank, "");
+    }
+
     // Server time
     if (strlen(state->runtime.server_time) > 0) {
         char time_buf[32];
@@ -1318,6 +1296,25 @@ static void update_ui(void) {
     } else {
         lv_label_set_text(lbl_server_time, "");
         lv_obj_add_flag(day_night_indicator, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // Map name - prefer stored map from config, fallback to API if available
+    server_config_t *active_srv = app_state_get_active_server();
+    const char *map_to_display = NULL;
+    if (active_srv && strlen(active_srv->map_name) > 0) {
+        map_to_display = active_srv->map_name;
+    } else if (strlen(state->runtime.map_name) > 0) {
+        map_to_display = state->runtime.map_name;
+    }
+    if (map_to_display) {
+        lv_label_set_text(lbl_map_name, map_format_name(map_to_display));
+        // Load map background image from SD card
+        map_background_load(map_to_display);
+    } else {
+        lv_label_set_text(lbl_map_name, "");
+        // Hide background when no map
+        if (img_map_bg) lv_obj_add_flag(img_map_bg, LV_OBJ_FLAG_HIDDEN);
+        if (bg_overlay) lv_obj_add_flag(bg_overlay, LV_OBJ_FLAG_HIDDEN);
     }
 
     // Player count
@@ -1378,12 +1375,12 @@ static void update_ui(void) {
 
     // Restart countdown
     if (srv && lbl_restart) {
-        int countdown = get_restart_countdown(srv);
+        int countdown = restart_get_countdown(srv);
 
         if (countdown >= 0) {
             char countdown_buf[64];
             char time_str[16];
-            format_countdown(countdown, time_str, sizeof(time_str));
+            restart_format_countdown(countdown, time_str, sizeof(time_str));
             const char *mode = srv->manual_restart_set ? "" : " (auto)";
             snprintf(countdown_buf, sizeof(countdown_buf), "Restart: %s%s", time_str, mode);
             lv_label_set_text(lbl_restart, countdown_buf);
@@ -1419,8 +1416,8 @@ static void update_sd_status(void) {
     char buf[16];
 
     if (usage < 0) {
-        // SD card not mounted
-        lv_label_set_text(lbl_sd_status, "SD: --");
+        // SD card not mounted or access failed
+        lv_label_set_text(lbl_sd_status, "SD: FAIL");
         lv_obj_set_style_text_color(lbl_sd_status, COLOR_DANGER, 0);
     } else {
         snprintf(buf, sizeof(buf), "SD: %d%%", usage);
@@ -1456,8 +1453,18 @@ static void process_events(void) {
                 switch_to_screen(SCREEN_SETTINGS);
                 break;
 
-            case EVT_SERVER_ADD:
-                settings_add_server(evt.data.server.server_id, evt.data.server.display_name);
+            case EVT_SERVER_ADD: {
+                int new_idx = settings_add_server(evt.data.server.server_id, evt.data.server.display_name);
+                // Set map_name on the newly added server
+                if (new_idx >= 0 && evt.data.server.map_name[0] != '\0') {
+                    if (app_state_lock(100)) {
+                        strncpy(state->settings.servers[new_idx].map_name,
+                                evt.data.server.map_name,
+                                sizeof(state->settings.servers[new_idx].map_name) - 1);
+                        app_state_unlock();
+                        settings_save();  // Save with map name
+                    }
+                }
                 state->runtime.current_players = -1;
                 state->runtime.server_time[0] = '\0';
                 app_state_clear_secondary_data();
@@ -1466,6 +1473,7 @@ static void process_events(void) {
                 app_state_request_refresh();
                 switch_to_screen(SCREEN_MAIN);
                 break;
+            }
 
             case EVT_SERVER_DELETE: {
                 int old_idx = state->settings.active_server_index;
@@ -1654,8 +1662,10 @@ void app_main(void) {
     if (state->settings.first_boot || strlen(state->settings.wifi_ssid) == 0) {
         ESP_LOGI(TAG, "First boot detected");
         // Default credentials for backward compatibility
-        strcpy(state->settings.wifi_ssid, "meshnetwork2131");
-        strcpy(state->settings.wifi_password, "9696Polikut.");
+        strncpy(state->settings.wifi_ssid, "meshnetwork2131", sizeof(state->settings.wifi_ssid) - 1);
+        state->settings.wifi_ssid[sizeof(state->settings.wifi_ssid) - 1] = '\0';
+        strncpy(state->settings.wifi_password, "9696Polikut.", sizeof(state->settings.wifi_password) - 1);
+        state->settings.wifi_password[sizeof(state->settings.wifi_password) - 1] = '\0';
         state->settings.first_boot = false;
         settings_save();
     }
@@ -1670,6 +1680,21 @@ void app_main(void) {
     ESP_LOGI(TAG, "Waiting for WiFi...");
     if (wifi_manager_wait_connected(WIFI_CONNECT_TIMEOUT_MS)) {
         ESP_LOGI(TAG, "WiFi connected!");
+
+        // Wait for SNTP time sync (important for history timestamps)
+        ESP_LOGI(TAG, "Waiting for time sync...");
+        int sntp_retries = 0;
+        while (!wifi_manager_is_time_synced() && sntp_retries < 50) {  // Max 5 seconds
+            vTaskDelay(pdMS_TO_TICKS(100));
+            sntp_retries++;
+        }
+        if (wifi_manager_is_time_synced()) {
+            time_t now;
+            time(&now);
+            ESP_LOGI(TAG, "Time synced: %lu", (unsigned long)now);
+        } else {
+            ESP_LOGW(TAG, "Time sync timeout, timestamps may be wrong");
+        }
     } else {
         ESP_LOGW(TAG, "WiFi connection timeout, will retry in background");
     }
@@ -1719,12 +1744,7 @@ void app_main(void) {
             }
 
             // Auto-hide alerts
-            if (state->ui.alert_active) {
-                int64_t now = esp_timer_get_time() / 1000;
-                if (now - state->ui.alert_start_time > ALERT_AUTO_HIDE_MS) {
-                    hide_alert();
-                }
-            }
+            alert_check_auto_hide();
 
             // Screensaver timeout check
             if (!state->ui.screensaver_active && state->settings.screensaver_timeout_sec > 0) {

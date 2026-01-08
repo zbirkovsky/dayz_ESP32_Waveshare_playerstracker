@@ -3,7 +3,7 @@
  */
 
 #include "battlemetrics.h"
-#include "../config.h"
+#include "config.h"
 #include <string.h>
 #include <stdlib.h>
 #include "esp_http_client.h"
@@ -47,13 +47,15 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
 
-// Parse server time from details and determine day/night
-static void parse_server_time(cJSON *details, server_status_t *status) {
+// Parse server time and map from details
+static void parse_server_details(cJSON *details, server_status_t *status) {
     status->server_time[0] = '\0';
+    status->map_name[0] = '\0';
     status->is_daytime = true;
 
     if (!details) return;
 
+    // Parse time
     cJSON *time_field = cJSON_GetObjectItem(details, "time");
     if (time_field && cJSON_IsString(time_field)) {
         strncpy(status->server_time, time_field->valuestring,
@@ -70,6 +72,14 @@ static void parse_server_time(cJSON *details, server_status_t *status) {
         ESP_LOGD(TAG, "Server time: %s, hour=%d (%s)",
                  status->server_time, hour,
                  status->is_daytime ? "Day" : "Night");
+    }
+
+    // Parse map name
+    cJSON *map_field = cJSON_GetObjectItem(details, "map");
+    if (map_field && cJSON_IsString(map_field)) {
+        strncpy(status->map_name, map_field->valuestring,
+                sizeof(status->map_name) - 1);
+        ESP_LOGD(TAG, "Map: %s", status->map_name);
     }
 }
 
@@ -203,18 +213,26 @@ esp_err_t battlemetrics_query(const char *server_id, server_status_t *status) {
         status->online = (strcmp(online->valuestring, "online") == 0);
     }
 
+    // Parse server rank (lower = more popular, null = unranked)
+    cJSON *rank = cJSON_GetObjectItem(attributes, "rank");
+    if (rank && cJSON_IsNumber(rank)) {
+        status->rank = rank->valueint;
+    } else {
+        status->rank = 0;  // 0 = unranked
+    }
+
     // Parse IP and port
     parse_address(attributes, status);
 
-    // Parse details (contains server time)
+    // Parse details (contains server time and map)
     cJSON *details = cJSON_GetObjectItem(attributes, "details");
-    parse_server_time(details, status);
+    parse_server_details(details, status);
 
     cJSON_Delete(root);
 
-    ESP_LOGI(TAG, "Parsed: players=%d/%d, time=%s, online=%d",
+    ESP_LOGI(TAG, "Parsed: players=%d/%d, time=%s, online=%d, rank=%d",
              status->players, status->max_players,
-             status->server_time, status->online);
+             status->server_time, status->online, status->rank);
 
     last_error[0] = '\0';
     last_query_success = true;

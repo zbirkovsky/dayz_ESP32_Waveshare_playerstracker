@@ -27,6 +27,7 @@ typedef struct {
 typedef struct {
     char server_id[32];             // BattleMetrics server ID
     char display_name[64];          // User-friendly name
+    char map_name[32];              // Map name (user-selected)
     char ip_address[32];            // Server IP
     uint16_t port;                  // Server port
     uint16_t max_players;           // Max player capacity
@@ -61,6 +62,7 @@ typedef struct {
     int player_count;               // Current players (-1 = unknown)
     int max_players;                // Max capacity
     char server_time[16];           // In-game time
+    char map_name[32];              // Map name (e.g., "chernarusplus")
     bool is_daytime;                // Day/night indicator
     bool valid;                     // True if data is valid
     bool fetch_pending;             // True if fetch in progress
@@ -119,10 +121,12 @@ typedef struct {
     int max_players;
     char last_update[32];
     char server_time[16];           // In-game server time (e.g., "10:12")
+    char map_name[32];              // Map name (e.g., "chernarusplus")
     bool is_daytime;                // true = day, false = night
     bool wifi_connected;
     volatile bool refresh_requested;
     connection_health_t connection;
+    int server_rank;                    // Server rank from BattleMetrics (0 = unranked)
 
     // Main server trend tracking
     trend_data_t main_trend;
@@ -219,7 +223,8 @@ bool app_state_consume_refresh_request(void);
  * Update player count and related data (thread-safe)
  */
 void app_state_update_player_data(int players, int max_players,
-                                   const char *server_time, bool is_daytime);
+                                   const char *server_time, bool is_daytime,
+                                   const char *map_name);
 
 /**
  * Get current screen ID (thread-safe)
@@ -246,9 +251,11 @@ void app_state_update_secondary_indices(void);
  * @param max_players Max capacity
  * @param server_time In-game time string
  * @param is_daytime Day/night indicator
+ * @param map_name Map name (e.g., "chernarusplus")
  */
 void app_state_update_secondary_status(int slot, int players, int max_players,
-                                        const char *server_time, bool is_daytime);
+                                        const char *server_time, bool is_daytime,
+                                        const char *map_name);
 
 /**
  * Add a trend data point for a secondary server

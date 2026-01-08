@@ -3,7 +3,7 @@
  */
 
 #include "display.h"
-#include "../config.h"
+#include "config.h"
 #include "driver/i2c.h"
 #include "esp_lcd_panel_rgb.h"
 #include "esp_lcd_touch_gt911.h"

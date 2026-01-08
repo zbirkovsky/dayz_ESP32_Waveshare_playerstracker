@@ -4,8 +4,8 @@
 
 #include "settings_store.h"
 #include "history_store.h"
-#include "../config.h"
-#include "../drivers/sd_card.h"
+#include "config.h"
+#include "drivers/sd_card.h"
 #include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -91,6 +91,10 @@ esp_err_t settings_load(void) {
         snprintf(key, sizeof(key), "srv%d_name", i);
         len = sizeof(srv->display_name);
         nvs_get_str(nvs, key, srv->display_name, &len);
+
+        snprintf(key, sizeof(key), "srv%d_map", i);
+        len = sizeof(srv->map_name);
+        nvs_get_str(nvs, key, srv->map_name, &len);
 
         snprintf(key, sizeof(key), "srv%d_ip", i);
         len = sizeof(srv->ip_address);
@@ -199,6 +203,9 @@ esp_err_t settings_save(void) {
 
         snprintf(key, sizeof(key), "srv%d_name", i);
         nvs_set_str(nvs, key, srv->display_name);
+
+        snprintf(key, sizeof(key), "srv%d_map", i);
+        nvs_set_str(nvs, key, srv->map_name);
 
         snprintf(key, sizeof(key), "srv%d_ip", i);
         nvs_set_str(nvs, key, srv->ip_address);
@@ -432,6 +439,7 @@ esp_err_t settings_export_to_json(void) {
 
         cJSON_AddStringToObject(server, "server_id", srv->server_id);
         cJSON_AddStringToObject(server, "display_name", srv->display_name);
+        cJSON_AddStringToObject(server, "map_name", srv->map_name);
         cJSON_AddStringToObject(server, "ip_address", srv->ip_address);
         cJSON_AddNumberToObject(server, "port", srv->port);
         cJSON_AddNumberToObject(server, "max_players", srv->max_players);
@@ -576,6 +584,11 @@ esp_err_t settings_import_from_json(void) {
             item = cJSON_GetObjectItem(server, "display_name");
             if (item && cJSON_IsString(item)) {
                 strncpy(srv->display_name, item->valuestring, sizeof(srv->display_name) - 1);
+            }
+
+            item = cJSON_GetObjectItem(server, "map_name");
+            if (item && cJSON_IsString(item)) {
+                strncpy(srv->map_name, item->valuestring, sizeof(srv->map_name) - 1);
             }
 
             item = cJSON_GetObjectItem(server, "ip_address");

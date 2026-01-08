@@ -39,6 +39,13 @@ CONFIG_LV_COLOR_DEPTH_16=y
 # Memory for LVGL
 CONFIG_LV_MEM_SIZE_KILOBYTES=64
 
+# LVGL Filesystem support (for loading images from SD card)
+CONFIG_LV_USE_FS_POSIX=y
+CONFIG_LV_FS_POSIX_LETTER=83
+
+# LVGL PNG decoder (for map background images)
+CONFIG_LV_USE_LODEPNG=y
+
 # Custom partition table for larger app (LVGL fonts)
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
@@ -47,5 +54,17 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 # 16MB flash size
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 
+# FatFS Long File Name support (required for JSON history files)
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+
 # Increase main task stack size (default is 3584, we need more for UI + HTTP)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+
+# USB OTG TinyUSB Configuration for Mass Storage mode
+CONFIG_TINYUSB=y
+CONFIG_TINYUSB_MSC_ENABLED=y
+CONFIG_TINYUSB_DESC_MANUFACTURER_STRING="DayZ Tracker"
+CONFIG_TINYUSB_DESC_PRODUCT_STRING="SD Card Storage"
+CONFIG_TINYUSB_DESC_SERIAL_STRING="123456"
+CONFIG_TINYUSB_MSC_BUFSIZE=4096

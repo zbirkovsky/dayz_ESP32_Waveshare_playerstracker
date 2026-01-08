@@ -4,7 +4,7 @@
 
 #include "ui_widgets.h"
 #include "ui_styles.h"
-#include "../config.h"
+#include "config.h"
 #include <stdio.h>
 
 // ============== LAYOUT HELPERS ==============
@@ -69,7 +69,7 @@ lv_obj_t* ui_create_icon_button(lv_obj_t *parent, const char *icon,
     lv_obj_set_size(btn, 50, 50);
     lv_obj_set_pos(btn, x, y);
     lv_obj_set_style_bg_color(btn, COLOR_BUTTON_SECONDARY, 0);
-    lv_obj_set_style_radius(btn, 25, 0);
+    lv_obj_set_style_radius(btn, UI_BUTTON_RADIUS, 0);
     if (callback) {
         lv_obj_add_event_cb(btn, callback, LV_EVENT_CLICKED, NULL);
     }
@@ -279,7 +279,7 @@ secondary_box_widgets_t ui_create_secondary_box(lv_obj_t *parent, int width, int
     widgets.container = lv_obj_create(parent);
     lv_obj_set_size(widgets.container, width, height);
     lv_obj_set_style_bg_color(widgets.container, lv_color_hex(0x2A2A2A), 0);
-    lv_obj_set_style_radius(widgets.container, 12, 0);
+    lv_obj_set_style_radius(widgets.container, UI_CARD_RADIUS, 0);
     lv_obj_set_style_border_width(widgets.container, 2, 0);
     lv_obj_set_style_border_color(widgets.container, lv_color_hex(0x404040), 0);
     lv_obj_set_style_pad_all(widgets.container, 10, 0);
@@ -299,12 +299,19 @@ secondary_box_widgets_t ui_create_secondary_box(lv_obj_t *parent, int width, int
     lv_label_set_long_mode(widgets.lbl_name, LV_LABEL_LONG_DOT);
     lv_obj_align(widgets.lbl_name, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    // Player count (large, middle)
+    // Player count (large, middle-left)
     widgets.lbl_players = lv_label_create(widgets.container);
     lv_label_set_text(widgets.lbl_players, "--/--");
     lv_obj_set_style_text_font(widgets.lbl_players, &lv_font_montserrat_28, 0);
     lv_obj_set_style_text_color(widgets.lbl_players, COLOR_DAYZ_GREEN, 0);
-    lv_obj_align(widgets.lbl_players, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_align(widgets.lbl_players, LV_ALIGN_LEFT_MID, 0, -5);
+
+    // Map name (below player count)
+    widgets.lbl_map = lv_label_create(widgets.container);
+    lv_label_set_text(widgets.lbl_map, "");
+    lv_obj_set_style_text_font(widgets.lbl_map, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(widgets.lbl_map, COLOR_TEXT_MUTED, 0);
+    lv_obj_align(widgets.lbl_map, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // Day/night indicator (right side of players)
     widgets.day_night_indicator = lv_label_create(widgets.container);
@@ -335,7 +342,7 @@ lv_obj_t* ui_create_add_server_box(lv_obj_t *parent, int width, int height,
     lv_obj_t *box = lv_obj_create(parent);
     lv_obj_set_size(box, width, height);
     lv_obj_set_style_bg_color(box, lv_color_hex(0x1E1E1E), 0);
-    lv_obj_set_style_radius(box, 12, 0);
+    lv_obj_set_style_radius(box, UI_CARD_RADIUS, 0);
     lv_obj_set_style_border_width(box, 2, 0);
     lv_obj_set_style_border_color(box, lv_color_hex(0x333333), 0);
     lv_obj_set_style_border_opa(box, LV_OPA_50, 0);
@@ -364,8 +371,9 @@ lv_obj_t* ui_create_add_server_box(lv_obj_t *parent, int width, int height,
 }
 
 void ui_update_secondary_box(secondary_box_widgets_t *widgets, const char *name,
-                              int players, int max_players, const char *server_time,
-                              bool is_daytime, int trend_delta, bool valid) {
+                              int players, int max_players, const char *map_name,
+                              const char *server_time, bool is_daytime,
+                              int trend_delta, bool valid) {
     if (!widgets || !widgets->container) return;
 
     // Update name
@@ -385,6 +393,15 @@ void ui_update_secondary_box(secondary_box_widgets_t *widgets, const char *name,
         } else {
             lv_label_set_text(widgets->lbl_players, "--/--");
             lv_obj_set_style_text_color(widgets->lbl_players, COLOR_TEXT_SECONDARY, 0);
+        }
+    }
+
+    // Update map name
+    if (widgets->lbl_map) {
+        if (valid && map_name && map_name[0]) {
+            lv_label_set_text(widgets->lbl_map, map_name);
+        } else {
+            lv_label_set_text(widgets->lbl_map, "");
         }
     }
 

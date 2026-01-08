@@ -10,7 +10,7 @@
 
 static const char *TAG = "events";
 
-#define EVENT_QUEUE_SIZE 16
+#define EVENT_QUEUE_SIZE 32
 
 static QueueHandle_t event_queue = NULL;
 
@@ -59,12 +59,16 @@ bool events_post_wifi_save(const char *ssid, const char *password) {
     return events_post(&event);
 }
 
-bool events_post_server_add(const char *server_id, const char *display_name) {
+bool events_post_server_add(const char *server_id, const char *display_name, const char *map_name) {
     app_event_t event = { .type = EVT_SERVER_ADD };
     strncpy(event.data.server.server_id, server_id,
             sizeof(event.data.server.server_id) - 1);
     strncpy(event.data.server.display_name, display_name,
             sizeof(event.data.server.display_name) - 1);
+    if (map_name) {
+        strncpy(event.data.server.map_name, map_name,
+                sizeof(event.data.server.map_name) - 1);
+    }
     return events_post(&event);
 }
 
