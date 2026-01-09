@@ -6,6 +6,8 @@
 #include "history_store.h"
 #include "config.h"
 #include "drivers/sd_card.h"
+#include "nvs_keys.h"
+#include "storage_config.h"
 #include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -79,71 +81,70 @@ esp_err_t settings_load(void) {
     state->settings.server_count = count > MAX_SERVERS ? MAX_SERVERS : count;
     nvs_get_u8(nvs, "active_srv", &state->settings.active_server_index);
 
-    // Load each server
+    // Load each server using NVS key macros
     for (int i = 0; i < state->settings.server_count; i++) {
-        char key[16];
         server_config_t *srv = &state->settings.servers[i];
 
-        snprintf(key, sizeof(key), "srv%d_id", i);
+        NVS_KEY_SERVER(key_id, i, NVS_SUFFIX_ID);
         len = sizeof(srv->server_id);
-        nvs_get_str(nvs, key, srv->server_id, &len);
+        nvs_get_str(nvs, key_id, srv->server_id, &len);
 
-        snprintf(key, sizeof(key), "srv%d_name", i);
+        NVS_KEY_SERVER(key_name, i, NVS_SUFFIX_NAME);
         len = sizeof(srv->display_name);
-        nvs_get_str(nvs, key, srv->display_name, &len);
+        nvs_get_str(nvs, key_name, srv->display_name, &len);
 
-        snprintf(key, sizeof(key), "srv%d_map", i);
+        NVS_KEY_SERVER(key_map, i, NVS_SUFFIX_MAP);
         len = sizeof(srv->map_name);
-        nvs_get_str(nvs, key, srv->map_name, &len);
+        nvs_get_str(nvs, key_map, srv->map_name, &len);
 
-        snprintf(key, sizeof(key), "srv%d_ip", i);
+        NVS_KEY_SERVER(key_ip, i, NVS_SUFFIX_IP);
         len = sizeof(srv->ip_address);
-        nvs_get_str(nvs, key, srv->ip_address, &len);
+        nvs_get_str(nvs, key_ip, srv->ip_address, &len);
 
-        snprintf(key, sizeof(key), "srv%d_port", i);
-        nvs_get_u16(nvs, key, &srv->port);
+        NVS_KEY_SERVER(key_port, i, NVS_SUFFIX_PORT);
+        nvs_get_u16(nvs, key_port, &srv->port);
 
-        snprintf(key, sizeof(key), "srv%d_max", i);
-        nvs_get_u16(nvs, key, &srv->max_players);
+        NVS_KEY_SERVER(key_max, i, NVS_SUFFIX_MAX);
+        nvs_get_u16(nvs, key_max, &srv->max_players);
         if (srv->max_players == 0) srv->max_players = DEFAULT_MAX_PLAYERS;
 
-        snprintf(key, sizeof(key), "srv%d_alert", i);
-        nvs_get_u16(nvs, key, &srv->alert_threshold);
+        NVS_KEY_SERVER(key_alert, i, NVS_SUFFIX_ALERT);
+        nvs_get_u16(nvs, key_alert, &srv->alert_threshold);
 
         uint8_t alerts_en = 0;
-        snprintf(key, sizeof(key), "srv%d_alen", i);
-        nvs_get_u8(nvs, key, &alerts_en);
+        NVS_KEY_SERVER(key_alen, i, NVS_SUFFIX_ALEN);
+        nvs_get_u8(nvs, key_alen, &alerts_en);
         srv->alerts_enabled = alerts_en > 0;
 
         // Load restart history
-        snprintf(key, sizeof(key), "srv%d_rcnt", i);
-        nvs_get_u8(nvs, key, &srv->restart_history.restart_count);
+        NVS_KEY_SERVER(key_rcnt, i, NVS_SUFFIX_RCNT);
+        nvs_get_u8(nvs, key_rcnt, &srv->restart_history.restart_count);
 
-        snprintf(key, sizeof(key), "srv%d_ravg", i);
-        nvs_get_u32(nvs, key, &srv->restart_history.avg_interval_sec);
+        NVS_KEY_SERVER(key_ravg, i, NVS_SUFFIX_RAVG);
+        nvs_get_u32(nvs, key_ravg, &srv->restart_history.avg_interval_sec);
 
-        snprintf(key, sizeof(key), "srv%d_rlast", i);
-        nvs_get_u32(nvs, key, &srv->restart_history.last_restart_time);
+        NVS_KEY_SERVER(key_rlast, i, NVS_SUFFIX_RLAST);
+        nvs_get_u32(nvs, key_rlast, &srv->restart_history.last_restart_time);
 
-        snprintf(key, sizeof(key), "srv%d_rtimes", i);
+        NVS_KEY_SERVER(key_rtimes, i, NVS_SUFFIX_RTIMES);
         len = sizeof(srv->restart_history.restart_times);
-        nvs_get_blob(nvs, key, srv->restart_history.restart_times, &len);
+        nvs_get_blob(nvs, key_rtimes, srv->restart_history.restart_times, &len);
 
         srv->restart_history.last_known_players = -1;
 
         // Load manual restart schedule
-        snprintf(key, sizeof(key), "srv%d_rhr", i);
-        nvs_get_u8(nvs, key, &srv->restart_hour);
+        NVS_KEY_SERVER(key_rhr, i, NVS_SUFFIX_RHR);
+        nvs_get_u8(nvs, key_rhr, &srv->restart_hour);
 
-        snprintf(key, sizeof(key), "srv%d_rmin", i);
-        nvs_get_u8(nvs, key, &srv->restart_minute);
+        NVS_KEY_SERVER(key_rmin, i, NVS_SUFFIX_RMIN);
+        nvs_get_u8(nvs, key_rmin, &srv->restart_minute);
 
-        snprintf(key, sizeof(key), "srv%d_rint", i);
-        nvs_get_u8(nvs, key, &srv->restart_interval_hours);
+        NVS_KEY_SERVER(key_rint, i, NVS_SUFFIX_RINT);
+        nvs_get_u8(nvs, key_rint, &srv->restart_interval_hours);
 
         uint8_t manual_set = 0;
-        snprintf(key, sizeof(key), "srv%d_rman", i);
-        nvs_get_u8(nvs, key, &manual_set);
+        NVS_KEY_SERVER(key_rman, i, NVS_SUFFIX_RMAN);
+        nvs_get_u8(nvs, key_rman, &manual_set);
         srv->manual_restart_set = manual_set > 0;
 
         srv->active = true;
@@ -193,61 +194,60 @@ esp_err_t settings_save(void) {
     nvs_set_u8(nvs, "server_count", state->settings.server_count);
     nvs_set_u8(nvs, "active_srv", state->settings.active_server_index);
 
-    // Save each server
+    // Save each server using NVS key macros
     for (int i = 0; i < state->settings.server_count; i++) {
-        char key[16];
         server_config_t *srv = &state->settings.servers[i];
 
-        snprintf(key, sizeof(key), "srv%d_id", i);
-        nvs_set_str(nvs, key, srv->server_id);
+        NVS_KEY_SERVER(key_id, i, NVS_SUFFIX_ID);
+        nvs_set_str(nvs, key_id, srv->server_id);
 
-        snprintf(key, sizeof(key), "srv%d_name", i);
-        nvs_set_str(nvs, key, srv->display_name);
+        NVS_KEY_SERVER(key_name, i, NVS_SUFFIX_NAME);
+        nvs_set_str(nvs, key_name, srv->display_name);
 
-        snprintf(key, sizeof(key), "srv%d_map", i);
-        nvs_set_str(nvs, key, srv->map_name);
+        NVS_KEY_SERVER(key_map, i, NVS_SUFFIX_MAP);
+        nvs_set_str(nvs, key_map, srv->map_name);
 
-        snprintf(key, sizeof(key), "srv%d_ip", i);
-        nvs_set_str(nvs, key, srv->ip_address);
+        NVS_KEY_SERVER(key_ip, i, NVS_SUFFIX_IP);
+        nvs_set_str(nvs, key_ip, srv->ip_address);
 
-        snprintf(key, sizeof(key), "srv%d_port", i);
-        nvs_set_u16(nvs, key, srv->port);
+        NVS_KEY_SERVER(key_port, i, NVS_SUFFIX_PORT);
+        nvs_set_u16(nvs, key_port, srv->port);
 
-        snprintf(key, sizeof(key), "srv%d_max", i);
-        nvs_set_u16(nvs, key, srv->max_players);
+        NVS_KEY_SERVER(key_max, i, NVS_SUFFIX_MAX);
+        nvs_set_u16(nvs, key_max, srv->max_players);
 
-        snprintf(key, sizeof(key), "srv%d_alert", i);
-        nvs_set_u16(nvs, key, srv->alert_threshold);
+        NVS_KEY_SERVER(key_alert, i, NVS_SUFFIX_ALERT);
+        nvs_set_u16(nvs, key_alert, srv->alert_threshold);
 
-        snprintf(key, sizeof(key), "srv%d_alen", i);
-        nvs_set_u8(nvs, key, srv->alerts_enabled ? 1 : 0);
+        NVS_KEY_SERVER(key_alen, i, NVS_SUFFIX_ALEN);
+        nvs_set_u8(nvs, key_alen, srv->alerts_enabled ? 1 : 0);
 
         // Save restart history
-        snprintf(key, sizeof(key), "srv%d_rcnt", i);
-        nvs_set_u8(nvs, key, srv->restart_history.restart_count);
+        NVS_KEY_SERVER(key_rcnt, i, NVS_SUFFIX_RCNT);
+        nvs_set_u8(nvs, key_rcnt, srv->restart_history.restart_count);
 
-        snprintf(key, sizeof(key), "srv%d_ravg", i);
-        nvs_set_u32(nvs, key, srv->restart_history.avg_interval_sec);
+        NVS_KEY_SERVER(key_ravg, i, NVS_SUFFIX_RAVG);
+        nvs_set_u32(nvs, key_ravg, srv->restart_history.avg_interval_sec);
 
-        snprintf(key, sizeof(key), "srv%d_rlast", i);
-        nvs_set_u32(nvs, key, srv->restart_history.last_restart_time);
+        NVS_KEY_SERVER(key_rlast, i, NVS_SUFFIX_RLAST);
+        nvs_set_u32(nvs, key_rlast, srv->restart_history.last_restart_time);
 
-        snprintf(key, sizeof(key), "srv%d_rtimes", i);
-        nvs_set_blob(nvs, key, srv->restart_history.restart_times,
+        NVS_KEY_SERVER(key_rtimes, i, NVS_SUFFIX_RTIMES);
+        nvs_set_blob(nvs, key_rtimes, srv->restart_history.restart_times,
                      sizeof(srv->restart_history.restart_times));
 
         // Save manual restart schedule
-        snprintf(key, sizeof(key), "srv%d_rhr", i);
-        nvs_set_u8(nvs, key, srv->restart_hour);
+        NVS_KEY_SERVER(key_rhr, i, NVS_SUFFIX_RHR);
+        nvs_set_u8(nvs, key_rhr, srv->restart_hour);
 
-        snprintf(key, sizeof(key), "srv%d_rmin", i);
-        nvs_set_u8(nvs, key, srv->restart_minute);
+        NVS_KEY_SERVER(key_rmin, i, NVS_SUFFIX_RMIN);
+        nvs_set_u8(nvs, key_rmin, srv->restart_minute);
 
-        snprintf(key, sizeof(key), "srv%d_rint", i);
-        nvs_set_u8(nvs, key, srv->restart_interval_hours);
+        NVS_KEY_SERVER(key_rint, i, NVS_SUFFIX_RINT);
+        nvs_set_u8(nvs, key_rint, srv->restart_interval_hours);
 
-        snprintf(key, sizeof(key), "srv%d_rman", i);
-        nvs_set_u8(nvs, key, srv->manual_restart_set ? 1 : 0);
+        NVS_KEY_SERVER(key_rman, i, NVS_SUFFIX_RMAN);
+        nvs_set_u8(nvs, key_rman, srv->manual_restart_set ? 1 : 0);
     }
 
     app_state_unlock();
@@ -470,21 +470,16 @@ esp_err_t settings_export_to_json(void) {
         return ESP_ERR_NO_MEM;
     }
 
-    sd_card_set_cs(true);
-
     FILE *f = fopen(CONFIG_JSON_FILE, "w");
     if (!f) {
         ESP_LOGE(TAG, "Failed to open %s for writing", CONFIG_JSON_FILE);
         free(json_str);
-        sd_card_set_cs(false);
         return ESP_FAIL;
     }
 
     fputs(json_str, f);
     fclose(f);
     free(json_str);
-
-    sd_card_set_cs(false);
 
     ESP_LOGI(TAG, "Settings exported to %s", CONFIG_JSON_FILE);
     return ESP_OK;
@@ -502,11 +497,8 @@ esp_err_t settings_import_from_json(void) {
         return ESP_ERR_NOT_FOUND;
     }
 
-    sd_card_set_cs(true);
-
     FILE *f = fopen(CONFIG_JSON_FILE, "r");
     if (!f) {
-        sd_card_set_cs(false);
         return ESP_ERR_NOT_FOUND;
     }
 
@@ -517,20 +509,17 @@ esp_err_t settings_import_from_json(void) {
 
     if (fsize <= 0 || fsize > 32768) {  // Max 32KB config
         fclose(f);
-        sd_card_set_cs(false);
         return ESP_ERR_INVALID_SIZE;
     }
 
     char *json_str = malloc(fsize + 1);
     if (!json_str) {
         fclose(f);
-        sd_card_set_cs(false);
         return ESP_ERR_NO_MEM;
     }
 
     size_t read_len = fread(json_str, 1, fsize, f);
     fclose(f);
-    sd_card_set_cs(false);
 
     json_str[read_len] = '\0';
 

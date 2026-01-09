@@ -56,18 +56,20 @@
 
 // ============== SD CARD CONFIGURATION ==============
 // SPI Mode SD Card
-#define SD_MOSI             GPIO_NUM_11
-#define SD_MISO             GPIO_NUM_13
-#define SD_CLK              GPIO_NUM_12
-// SD_CS is controlled via CH422G IO expander EXIO4
+// Waveshare ESP32-S3-Touch-LCD-7 SD card pins (from wiki documentation)
+// https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7
+#define SD_MOSI             GPIO_NUM_11    // TF card input pin
+#define SD_MISO             GPIO_NUM_13    // TF card output pin
+#define SD_CLK              GPIO_NUM_12    // TF card clock pin
+// SD_CS is controlled via CH422G IO expander EXIO4 (active low)
 
 // CH422G IO Expander (controls SD_CS and GT911 reset)
 // CH422G address range is 0x20-0x27, device specific
 #define CH422G_I2C_ADDR     0x24
 #define CH422G_REG_OUT      0x01
+#define CH422G_EXIO0_BIT    (1 << 0)    // LCD backlight control (active high)
 #define CH422G_EXIO1_BIT    (1 << 1)    // GT911 touch reset pin (TP_RST)
-#define CH422G_EXIO2_BIT    (1 << 2)    // LCD backlight control
-#define CH422G_EXIO4_BIT    (1 << 4)    // SD_CS pin
+#define CH422G_EXIO4_BIT    (1 << 4)    // SD_CS pin (active low)
 #define CH422G_EXIO5_BIT    (1 << 5)    // USB_SEL: Low=USB, High=CAN
 
 // ============== USB OTG CONFIGURATION ==============
@@ -85,16 +87,20 @@
 #define MAX_RESTART_HISTORY         10      // Track last 10 restarts per server
 
 // ============== HISTORY STORAGE ==============
-#define HISTORY_FILE_MAGIC      0xDA120002  // Bumped version for per-server history
-#define HISTORY_FILE_PREFIX     "/sdcard/hist_"   // Will append server index, e.g. hist_0.bin
-#define NVS_HISTORY_MAX         500         // ~42 hours at 5-min intervals (primary storage when SD fails)
-#define HISTORY_SAVE_INTERVAL   10          // Legacy (now using NVS_SAVE_INTERVAL in history_store.c)
+// Storage constants moved to services/storage_config.h
+// Backward compatibility aliases:
+#include "services/storage_config.h"
+#define HISTORY_FILE_MAGIC      STORAGE_HISTORY_FILE_MAGIC
+#define HISTORY_FILE_PREFIX     STORAGE_HISTORY_BIN_PREFIX
+#define NVS_HISTORY_MAX         NVS_HISTORY_MAX_ENTRIES
+#define HISTORY_SAVE_INTERVAL   NVS_SAVE_INTERVAL
 
 // ============== JSON STORAGE ==============
-#define HISTORY_JSON_DIR        "/sdcard/history"       // Root directory for JSON history
-#define CONFIG_JSON_FILE        "/sdcard/servers.json"  // Server configuration export
-#define HISTORY_RETENTION_DAYS  365                     // Keep 1 year of history files
-#define JSON_HISTORY_VERSION    1                       // JSON format version
+// Storage constants moved to services/storage_config.h
+#define HISTORY_JSON_DIR        STORAGE_HISTORY_JSON_DIR
+#define CONFIG_JSON_FILE        STORAGE_CONFIG_JSON_FILE
+#define HISTORY_RETENTION_DAYS  STORAGE_HISTORY_RETENTION
+#define JSON_HISTORY_VERSION    STORAGE_JSON_VERSION
 
 // ============== NETWORK ==============
 #define HTTP_RESPONSE_BUFFER_SIZE   16384

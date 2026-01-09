@@ -58,6 +58,10 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=255
 
+# CRITICAL: SD cards use 512-byte sectors, NOT 4096!
+# Using wrong sector size causes ESP32 to read/write to wrong locations
+CONFIG_FATFS_SECTOR_512=y
+
 # Increase main task stack size (default is 3584, we need more for UI + HTTP)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
 
