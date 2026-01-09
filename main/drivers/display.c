@@ -3,6 +3,7 @@
  */
 
 #include "display.h"
+#include "io_expander.h"
 #include "config.h"
 #include "driver/i2c.h"
 #include "esp_lcd_panel_rgb.h"
@@ -18,64 +19,6 @@ static esp_lcd_panel_handle_t panel_handle = NULL;
 static esp_lcd_touch_handle_t touch_handle = NULL;
 static lv_display_t *lvgl_disp = NULL;
 static lv_indev_t *touch_indev = NULL;
-
-// CH422G uses register address AS the I2C device address!
-// Mode register: 0x24, Output register for pins 0-7: 0x38
-#define CH422G_MODE_ADDR    0x24
-#define CH422G_OUTPUT_ADDR  0x38
-#define CH422G_MODE_OUTPUT  0x01    // Enable output mode for pins 0-7
-
-// CH422G output state (shared with sd_card driver via extern if needed)
-static uint8_t ch422g_state = 0xFF;
-
-static esp_err_t ch422g_init_and_write(uint8_t output_state) {
-    // Step 1: Configure CH422G mode register (address 0x24)
-    uint8_t mode = CH422G_MODE_OUTPUT;
-    esp_err_t ret = i2c_master_write_to_device(TOUCH_I2C_NUM, CH422G_MODE_ADDR, &mode, 1, pdMS_TO_TICKS(100));
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "CH422G mode config failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    // Step 2: Write output state to output register (address 0x38)
-    ret = i2c_master_write_to_device(TOUCH_I2C_NUM, CH422G_OUTPUT_ADDR, &output_state, 1, pdMS_TO_TICKS(100));
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "CH422G output write failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ch422g_state = output_state;
-    return ESP_OK;
-}
-
-static esp_err_t reset_gt911_via_ch422g(void) {
-    ESP_LOGI(TAG, "Resetting GT911 via CH422G...");
-
-    // Assert reset (EXIO1 = LOW, keeps SD_CS/EXIO4 high, all others high for safety)
-    uint8_t reset_low = CH422G_EXIO4_BIT | 0xFD;  // All bits high except bit 1 (EXIO1)
-    esp_err_t ret = ch422g_init_and_write(reset_low);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-    ESP_LOGI(TAG, "GT911 reset asserted (EXIO1=0)");
-
-    // Hold reset for 20ms (GT911 needs at least 10ms)
-    vTaskDelay(pdMS_TO_TICKS(20));
-
-    // Deassert reset (EXIO1 = HIGH)
-    uint8_t reset_high = CH422G_EXIO4_BIT | CH422G_EXIO1_BIT | 0xFF;
-    ret = ch422g_init_and_write(reset_high);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-    ESP_LOGI(TAG, "GT911 reset released (EXIO1=1)");
-
-    // Wait for GT911 to boot (needs ~55ms minimum)
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    ESP_LOGI(TAG, "GT911 reset complete");
-    return ESP_OK;
-}
 
 static void scan_i2c_bus(void) {
     ESP_LOGI(TAG, "Scanning I2C bus...");
@@ -115,8 +58,15 @@ esp_err_t display_init_touch(void) {
     // Scan I2C bus to see what devices are present
     scan_i2c_bus();
 
-    // Try to reset GT911 via CH422G (may not work if CH422G not present)
-    reset_gt911_via_ch422g();
+    // Initialize IO expander (single source of truth for CH422G)
+    esp_err_t exp_ret = io_expander_init();
+    if (exp_ret != ESP_OK) {
+        ESP_LOGE(TAG, "IO expander init failed: %s", esp_err_to_name(exp_ret));
+        return exp_ret;
+    }
+
+    // Reset GT911 via centralized IO expander
+    io_expander_reset_gt911();
 
     // Try both GT911 addresses (0x5D default, 0x14 alternate)
     uint8_t gt911_addresses[] = {0x5D, 0x14};
@@ -307,11 +257,5 @@ esp_lcd_panel_handle_t display_get_panel(void) {
 }
 
 void display_set_backlight(bool on) {
-    if (on) {
-        ch422g_state |= CH422G_EXIO2_BIT;   // High = backlight ON
-    } else {
-        ch422g_state &= ~CH422G_EXIO2_BIT;  // Low = backlight OFF
-    }
-    ch422g_init_and_write(ch422g_state);
-    ESP_LOGI(TAG, "Backlight %s", on ? "ON" : "OFF");
+    io_expander_set_backlight(on);
 }

@@ -27,8 +27,8 @@ static sdmmc_card_t *sd_card = NULL;
 static bool sd_mounted = false;
 
 /**
- * DEBUG: Read raw sector from SD card and verify MBR signature
- * This bypasses the filesystem to check if we're reading the REAL card
+ * DEBUG: Read raw sectors from SD card to diagnose partition issues
+ * Checks if card is MBR-partitioned or superfloppy (no partition table)
  */
 static void debug_verify_raw_sector(void) {
     if (!sd_card) {
@@ -42,45 +42,66 @@ static void debug_verify_raw_sector(void) {
         return;
     }
 
-    memset(sector, 0, 512);
+    ESP_LOGI(TAG, "========== SD CARD PARTITION DEBUG ==========");
 
-    ESP_LOGI(TAG, "========== RAW SECTOR 0 (MBR) DEBUG ==========");
-
-    // Read sector 0 (MBR) directly from SD card
+    // Read sector 0
     esp_err_t ret = sdmmc_read_sectors(sd_card, sector, 0, 1);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "DEBUG: Raw sector read FAILED: %s", esp_err_to_name(ret));
-        ESP_LOGE(TAG, "DEBUG: This confirms SPI is NOT talking to real SD card!");
+        ESP_LOGE(TAG, "DEBUG: Sector 0 read FAILED: %s", esp_err_to_name(ret));
         free(sector);
         return;
     }
 
-    // Check MBR boot signature at offset 510-511 (should be 0x55, 0xAA)
+    // Check boot signature at 510-511
     uint8_t sig1 = sector[510];
     uint8_t sig2 = sector[511];
+    ESP_LOGI(TAG, "Sector 0 signature: 0x%02X 0x%02X", sig1, sig2);
 
-    ESP_LOGI(TAG, "DEBUG: MBR signature bytes: 0x%02X 0x%02X (expected: 0x55 0xAA)", sig1, sig2);
+    // Detect if sector 0 is MBR or FAT boot sector
+    // FAT boot sector starts with JMP (EB xx 90 or E9 xx xx)
+    // MBR typically starts with 00 or 33 C0 (xor ax,ax) or FA (cli)
+    bool is_fat_bootsect = (sector[0] == 0xEB || sector[0] == 0xE9);
 
-    if (sig1 == 0x55 && sig2 == 0xAA) {
-        ESP_LOGI(TAG, "DEBUG: *** MBR SIGNATURE VALID! Reading real SD card ***");
+    // Check for OEM name at offset 3 (FAT boot sector has this)
+    char oem_name[9] = {0};
+    memcpy(oem_name, &sector[3], 8);
 
-        // Parse partition table (offset 446-509)
-        ESP_LOGI(TAG, "DEBUG: First partition entry:");
+    ESP_LOGI(TAG, "Sector 0 first byte: 0x%02X (%s)", sector[0],
+             is_fat_bootsect ? "JMP - FAT boot sector" : "Not JMP - possibly MBR");
+    ESP_LOGI(TAG, "OEM name at offset 3: '%s'", oem_name);
+
+    if (is_fat_bootsect) {
+        ESP_LOGW(TAG, "*** SECTOR 0 IS FAT BOOT SECTOR (SUPERFLOPPY) ***");
+        ESP_LOGW(TAG, "Card has NO partition table - FAT starts at sector 0");
+
+        // Parse FAT BPB (BIOS Parameter Block)
+        uint16_t bytes_per_sector = sector[11] | (sector[12] << 8);
+        uint8_t sectors_per_cluster = sector[13];
+        uint16_t reserved_sectors = sector[14] | (sector[15] << 8);
+        uint8_t num_fats = sector[16];
+
+        ESP_LOGI(TAG, "FAT BPB: bytes/sector=%u, sectors/cluster=%u, reserved=%u, FATs=%u",
+                 bytes_per_sector, sectors_per_cluster, reserved_sectors, num_fats);
+    } else {
+        // Might be MBR - check partition table
+        ESP_LOGI(TAG, "Checking partition table at offset 446:");
         uint8_t *part = &sector[446];
-        ESP_LOGI(TAG, "  Boot flag: 0x%02X", part[0]);
-        ESP_LOGI(TAG, "  Type: 0x%02X (0x0B/0x0C=FAT32, 0x06=FAT16)", part[4]);
+        uint8_t part_type = part[4];
         uint32_t lba_start = part[8] | (part[9]<<8) | (part[10]<<16) | (part[11]<<24);
         uint32_t lba_count = part[12] | (part[13]<<8) | (part[14]<<16) | (part[15]<<24);
-        ESP_LOGI(TAG, "  LBA start: %lu, sectors: %lu", lba_start, lba_count);
-    } else if (sig1 == 0x00 && sig2 == 0x00) {
-        ESP_LOGE(TAG, "DEBUG: *** MBR is ALL ZEROS! Not reading real SD card! ***");
-        ESP_LOGE(TAG, "DEBUG: Data is coming from uninitialized memory or wrong device");
-    } else {
-        ESP_LOGW(TAG, "DEBUG: *** MBR signature INVALID! Card may be corrupted or wrong device ***");
+
+        ESP_LOGI(TAG, "  Partition 1: type=0x%02X, LBA start=%lu, sectors=%lu",
+                 part_type, lba_start, lba_count);
+
+        if (part_type == 0x0B || part_type == 0x0C) {
+            ESP_LOGI(TAG, "  -> FAT32 partition at sector %lu", lba_start);
+        } else if (part_type == 0x00) {
+            ESP_LOGW(TAG, "  -> Empty partition entry!");
+        }
     }
 
-    // Print first 32 bytes of MBR for analysis
-    ESP_LOGI(TAG, "DEBUG: First 32 bytes of sector 0:");
+    // Print first 32 bytes hex dump
+    ESP_LOGI(TAG, "Sector 0 hex (first 32 bytes):");
     char hex_line[100];
     for (int row = 0; row < 2; row++) {
         int pos = 0;
@@ -90,16 +111,15 @@ static void debug_verify_raw_sector(void) {
         ESP_LOGI(TAG, "  %s", hex_line);
     }
 
-    // Print last 16 bytes (including signature)
-    ESP_LOGI(TAG, "DEBUG: Last 16 bytes of sector 0 (ends with signature):");
-    char hex_end[100];
+    // Print partition table area (446-461 for first entry)
+    ESP_LOGI(TAG, "Partition table area (bytes 446-461):");
     int pos = 0;
-    for (int i = 496; i < 512; i++) {
-        pos += sprintf(&hex_end[pos], "%02X ", sector[i]);
+    for (int i = 446; i < 462; i++) {
+        pos += sprintf(&hex_line[pos], "%02X ", sector[i]);
     }
-    ESP_LOGI(TAG, "  %s", hex_end);
+    ESP_LOGI(TAG, "  %s", hex_line);
 
-    ESP_LOGI(TAG, "===============================================");
+    ESP_LOGI(TAG, "==============================================");
 
     free(sector);
 }

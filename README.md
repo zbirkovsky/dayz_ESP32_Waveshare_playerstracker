@@ -227,6 +227,21 @@ Uses the [BattleMetrics API](https://www.battlemetrics.com/developers/documentat
 
 ## Changelog
 
+### v2.3.0 - Storage Layer Refactoring & SD Card Fix
+- **CRITICAL FIX**: SD card now works correctly with all partition formats
+  - Fixed superfloppy (no partition table) detection
+  - Added partition structure diagnostics
+  - ESP32 and PC now see the same files on SD card
+- **Bug Fix**: `sd_card_verify_access()` now correctly returns false when access fails
+- **Code Quality**: Major storage layer refactoring
+  - New `storage_config.h` - centralized storage constants
+  - New `nvs_keys.h` - NVS key generation macros (replaced 32+ duplicate patterns)
+  - New `nvs_cache.h/c` - NVS handle caching for efficiency
+  - New `path_validator.h/c` - path safety validation
+  - New `io_expander.h/c` - CH422G I2C driver for SD_CS control
+- **Config Fix**: FATFS sector size set to 512 bytes (was incorrectly 4096)
+- **Build Helper**: Added `build_esp32.py` script for building from any environment
+
 ### v2.2.0 - Trend Fixes & Secondary History
 - **Fixed 2-hour trend calculation**: Increased trend buffer from 4 to 240 data points
 - **Stable trend indicator**: Shows `→ 0` when player count is stable (instead of blank)

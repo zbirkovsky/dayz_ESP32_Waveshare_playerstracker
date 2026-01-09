@@ -7,6 +7,7 @@
 #include "config.h"
 #include "sd_card.h"
 #include "display.h"
+#include "io_expander.h"
 
 #include "esp_log.h"
 #include "driver/gpio.h"
@@ -25,29 +26,6 @@ static const char *TAG = "usb_msc";
 static bool usb_msc_active = false;
 static sdmmc_card_t *msc_card = NULL;
 static tinyusb_msc_storage_handle_t storage_handle = NULL;
-
-// CH422G communication
-#define CH422G_MODE_ADDR    0x24
-#define CH422G_OUTPUT_ADDR  0x38
-#define CH422G_MODE_OUTPUT  0x01
-
-static uint8_t ch422g_state = 0xFF;
-
-static esp_err_t ch422g_write(uint8_t state) {
-    uint8_t mode = CH422G_MODE_OUTPUT;
-    esp_err_t ret = i2c_master_write_to_device(TOUCH_I2C_NUM, CH422G_MODE_ADDR, &mode, 1, pdMS_TO_TICKS(100));
-    if (ret != ESP_OK) return ret;
-    return i2c_master_write_to_device(TOUCH_I2C_NUM, CH422G_OUTPUT_ADDR, &state, 1, pdMS_TO_TICKS(100));
-}
-
-static void set_usb_mode(bool usb_mode) {
-    if (usb_mode) {
-        ch422g_state &= ~CH422G_EXIO5_BIT;  // Low = USB mode
-    } else {
-        ch422g_state |= CH422G_EXIO5_BIT;   // High = CAN mode
-    }
-    ch422g_write(ch422g_state);
-}
 
 // GT911 touch controller registers
 #define GT911_ADDR          0x5D
@@ -90,14 +68,15 @@ bool usb_msc_touch_detected(void) {
         return false;
     }
 
-    // Reset GT911 via CH422G EXIO1
-    ch422g_state = 0xFF;
-    ch422g_state &= ~CH422G_EXIO1_BIT;  // Assert reset (low)
-    ch422g_write(ch422g_state);
-    vTaskDelay(pdMS_TO_TICKS(20));
-    ch422g_state |= CH422G_EXIO1_BIT;   // Release reset (high)
-    ch422g_write(ch422g_state);
-    vTaskDelay(pdMS_TO_TICKS(100));     // Wait for GT911 to initialize
+    // Initialize IO expander (single source of truth for CH422G)
+    ret = io_expander_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "IO expander init failed");
+        return false;
+    }
+
+    // Reset GT911 via centralized IO expander
+    io_expander_reset_gt911();
 
     // Check for touch multiple times (debounce)
     int touch_count = 0;
@@ -120,8 +99,12 @@ bool usb_msc_touch_detected(void) {
              touch_count, 10, touched ? "USB MODE" : "NORMAL MODE");
 
     // Clean up I2C if not entering USB mode (will be re-initialized by display_init)
+    // BUT we must also reset io_expander state so it reinitializes properly!
     if (!touched) {
         i2c_driver_delete(TOUCH_I2C_NUM);
+        // CRITICAL: Tell io_expander it needs to reinitialize after I2C is restored
+        extern void io_expander_reset_state(void);
+        io_expander_reset_state();
     }
 
     return touched;
@@ -154,9 +137,8 @@ static esp_err_t init_sd_for_msc(void) {
     slot_config.gpio_cs = GPIO_NUM_NC;  // CS via CH422G
     slot_config.host_id = SPI2_HOST;
 
-    // Activate CS
-    ch422g_state &= ~CH422G_EXIO4_BIT;
-    ch422g_write(ch422g_state);
+    // Activate CS via centralized IO expander
+    io_expander_set_sd_cs(true);
 
     // Probe card
     ret = sdspi_host_init();
@@ -192,9 +174,9 @@ static esp_err_t init_sd_for_msc(void) {
 esp_err_t usb_msc_init(void) {
     ESP_LOGI(TAG, "Initializing USB Mass Storage mode...");
 
-    // I2C is already initialized by usb_msc_touch_detected()
-    // Set USB mode on CH422G (select USB instead of CAN)
-    set_usb_mode(true);
+    // I2C and IO expander already initialized by usb_msc_touch_detected()
+    // Set USB mode via centralized IO expander
+    io_expander_set_usb_mode(true);
     vTaskDelay(pdMS_TO_TICKS(10));
 
     // Initialize SD card
