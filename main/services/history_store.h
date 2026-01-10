@@ -78,6 +78,12 @@ void history_switch_server(int old_server_index, int new_server_index);
 void history_clear(void);
 
 /**
+ * Load JSON history for a server (used on boot)
+ * @param server_index Server index to load history for
+ */
+void history_load_json_for_server(int server_index);
+
+/**
  * Get seconds for a given history range
  */
 uint32_t history_range_to_seconds(history_range_t range);
@@ -132,5 +138,11 @@ esp_err_t history_init_json_dir(int server_index);
  * @return Number of .jsonl files, or -1 on error
  */
 int history_get_json_file_count(int server_index);
+
+/**
+ * Clear ALL history storage (RAM, NVS, and SD card JSON files)
+ * Use this to start fresh with clean data
+ */
+void history_clear_all_storage(void);
 
 #endif // HISTORY_STORE_H

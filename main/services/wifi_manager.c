@@ -145,3 +145,60 @@ bool wifi_manager_is_time_synced(void) {
     // If time is > year 2020, we have synced
     return now > 1577836800;  // 2020-01-01 00:00:00 UTC
 }
+
+int wifi_manager_get_rssi(void) {
+    if (!wifi_manager_is_connected()) return 0;
+
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        return ap_info.rssi;
+    }
+    return 0;
+}
+
+void wifi_manager_get_ip_str(char *buf, size_t buf_size) {
+    if (!buf || buf_size == 0) return;
+
+    if (!wifi_manager_is_connected()) {
+        snprintf(buf, buf_size, "Not connected");
+        return;
+    }
+
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif) {
+        esp_netif_ip_info_t ip_info;
+        if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+            snprintf(buf, buf_size, IPSTR, IP2STR(&ip_info.ip));
+            return;
+        }
+    }
+    snprintf(buf, buf_size, "Unknown");
+}
+
+void wifi_manager_get_mac_str(char *buf, size_t buf_size) {
+    if (!buf || buf_size < 18) return;
+
+    uint8_t mac[6];
+    if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
+        snprintf(buf, buf_size, "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    } else {
+        snprintf(buf, buf_size, "Unknown");
+    }
+}
+
+void wifi_manager_get_ssid(char *buf, size_t buf_size) {
+    if (!buf || buf_size == 0) return;
+
+    if (!wifi_manager_is_connected()) {
+        snprintf(buf, buf_size, "Not connected");
+        return;
+    }
+
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        snprintf(buf, buf_size, "%s", ap_info.ssid);
+    } else {
+        snprintf(buf, buf_size, "Unknown");
+    }
+}

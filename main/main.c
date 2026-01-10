@@ -13,6 +13,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <time.h>
 #include <errno.h>
@@ -40,13 +41,42 @@
 #include "services/alert_manager.h"
 #include "ui/ui_styles.h"
 #include "ui/ui_widgets.h"
-#include "ui/map_background.h"
 #include "ui/screen_history.h"
 #include "drivers/usb_msc.h"
 
 static const char *TAG = "main";
 
 // ============== HELPER FUNCTIONS ==============
+
+static const char* map_format_name(const char *raw_map) {
+    if (!raw_map || raw_map[0] == '\0') return "";
+
+    // Common DayZ maps
+    if (strcasecmp(raw_map, "chernarusplus") == 0) return "Chernarus";
+    if (strcasecmp(raw_map, "enoch") == 0) return "Livonia";
+    if (strcasecmp(raw_map, "sakhal") == 0) return "Sakhal";
+    if (strcasecmp(raw_map, "deerisle") == 0) return "Deer Isle";
+    if (strcasecmp(raw_map, "namalsk") == 0) return "Namalsk";
+    if (strcasecmp(raw_map, "esseker") == 0) return "Esseker";
+    if (strcasecmp(raw_map, "takistan") == 0) return "Takistan";
+    if (strcasecmp(raw_map, "chiemsee") == 0) return "Chiemsee";
+    if (strcasecmp(raw_map, "rostow") == 0) return "Rostow";
+    if (strcasecmp(raw_map, "valning") == 0) return "Valning";
+    if (strcasecmp(raw_map, "banov") == 0) return "Banov";
+    if (strcasecmp(raw_map, "iztek") == 0) return "Iztek";
+    if (strcasecmp(raw_map, "melkart") == 0) return "Melkart";
+    if (strcasecmp(raw_map, "exclusionzone") == 0) return "Exclusion Zone";
+    if (strcasecmp(raw_map, "pripyat") == 0) return "Pripyat";
+
+    // Return raw name if not recognized (capitalize first letter)
+    static char formatted[32];
+    strncpy(formatted, raw_map, sizeof(formatted) - 1);
+    formatted[sizeof(formatted) - 1] = '\0';
+    if (formatted[0] >= 'a' && formatted[0] <= 'z') {
+        formatted[0] -= 32;  // Capitalize
+    }
+    return formatted;
+}
 
 // ============== UI WIDGET POINTERS ==============
 // Screen objects
@@ -59,8 +89,7 @@ static lv_obj_t *screen_history = NULL;
 
 // Main screen widgets
 static lv_obj_t *main_card = NULL;
-static lv_obj_t *img_map_bg = NULL;           // Background image for map
-static lv_obj_t *bg_overlay = NULL;           // Dark overlay for text readability
+static lv_obj_t *lbl_wifi_icon = NULL;
 static lv_obj_t *lbl_server = NULL;
 static lv_obj_t *lbl_server_time = NULL;
 static lv_obj_t *lbl_map_name = NULL;
@@ -506,34 +535,26 @@ static void create_main_screen(void) {
     lv_obj_add_flag(main_card, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(main_card, on_card_clicked, LV_EVENT_CLICKED, NULL);
 
-    // Background image for map (loaded from SD card)
-    img_map_bg = lv_img_create(main_card);
-    lv_obj_set_size(img_map_bg, 720, MAIN_CARD_HEIGHT_COMPACT - 20);
-    lv_obj_align(img_map_bg, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_flag(img_map_bg, LV_OBJ_FLAG_HIDDEN);  // Hidden until image loaded
-    lv_img_set_zoom(img_map_bg, 256);  // 256 = 100% zoom
-    lv_obj_set_style_radius(img_map_bg, UI_CARD_RADIUS, 0);
-    lv_obj_add_flag(img_map_bg, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-
-    // Dark overlay for text readability (semi-transparent)
-    bg_overlay = lv_obj_create(main_card);
-    lv_obj_set_size(bg_overlay, 720, MAIN_CARD_HEIGHT_COMPACT - 20);
-    lv_obj_align(bg_overlay, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(bg_overlay, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(bg_overlay, LV_OPA_60, 0);  // 60% opacity
-    lv_obj_set_style_border_width(bg_overlay, 0, 0);
-    lv_obj_set_style_radius(bg_overlay, UI_CARD_RADIUS, 0);
-    lv_obj_add_flag(bg_overlay, LV_OBJ_FLAG_HIDDEN);  // Hidden until image loaded
-    lv_obj_clear_flag(bg_overlay, LV_OBJ_FLAG_CLICKABLE);
-
-    // Initialize map background manager
-    map_background_init(img_map_bg, bg_overlay);
-
     // Settings button
     ui_create_icon_button(screen_main, LV_SYMBOL_SETTINGS, 20, 10, on_settings_clicked);
 
     // History button
     ui_create_icon_button(screen_main, LV_SYMBOL_IMAGE, 80, 10, on_history_clicked);
+
+    // WiFi status icon (clickable - opens WiFi settings)
+    lv_obj_t *wifi_btn = lv_btn_create(screen_main);
+    lv_obj_set_size(wifi_btn, 50, 50);
+    lv_obj_align(wifi_btn, LV_ALIGN_TOP_LEFT, 140, 10);
+    lv_obj_set_style_bg_opa(wifi_btn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_shadow_width(wifi_btn, 0, 0);
+    lv_obj_set_style_border_width(wifi_btn, 0, 0);
+    lv_obj_add_event_cb(wifi_btn, on_wifi_settings_clicked, LV_EVENT_CLICKED, NULL);
+
+    lbl_wifi_icon = lv_label_create(wifi_btn);
+    lv_label_set_text(lbl_wifi_icon, LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_font(lbl_wifi_icon, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(lbl_wifi_icon, COLOR_TEXT_MUTED, 0);
+    lv_obj_center(lbl_wifi_icon);
 
     // Server navigation
     btn_prev_server = ui_create_icon_button(screen_main, LV_SYMBOL_LEFT,
@@ -822,17 +843,112 @@ static void create_wifi_settings_screen(void) {
     ui_create_back_button(screen_wifi, on_back_clicked);
     ui_create_title(screen_wifi, "WiFi Settings");
 
+    // Diagnostics panel on the right side
+    lv_obj_t *diag_panel = lv_obj_create(screen_wifi);
+    lv_obj_set_size(diag_panel, 280, 180);
+    lv_obj_align(diag_panel, LV_ALIGN_TOP_RIGHT, -20, 60);
+    lv_obj_set_style_bg_color(diag_panel, lv_color_hex(0x1a1a2e), 0);
+    lv_obj_set_style_border_color(diag_panel, lv_color_hex(0x333355), 0);
+    lv_obj_set_style_border_width(diag_panel, 1, 0);
+    lv_obj_set_style_radius(diag_panel, 10, 0);
+    lv_obj_set_style_pad_all(diag_panel, 15, 0);
+    lv_obj_clear_flag(diag_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Diagnostics title
+    lv_obj_t *diag_title = lv_label_create(diag_panel);
+    lv_label_set_text(diag_title, "Connection Status");
+    lv_obj_set_style_text_font(diag_title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(diag_title, COLOR_INFO, 0);
+    lv_obj_align(diag_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    // Status
+    lv_obj_t *lbl_conn_status = lv_label_create(diag_panel);
+    if (wifi_manager_is_connected()) {
+        lv_label_set_text(lbl_conn_status, LV_SYMBOL_OK " Connected");
+        lv_obj_set_style_text_color(lbl_conn_status, COLOR_SUCCESS, 0);
+    } else {
+        lv_label_set_text(lbl_conn_status, LV_SYMBOL_CLOSE " Disconnected");
+        lv_obj_set_style_text_color(lbl_conn_status, COLOR_DANGER, 0);
+    }
+    lv_obj_set_style_text_font(lbl_conn_status, &lv_font_montserrat_14, 0);
+    lv_obj_align(lbl_conn_status, LV_ALIGN_TOP_LEFT, 0, 22);
+
+    // Connected SSID
+    char ssid_buf[64];
+    wifi_manager_get_ssid(ssid_buf, sizeof(ssid_buf));
+    lv_obj_t *lbl_ssid_info = lv_label_create(diag_panel);
+    char ssid_line[80];
+    snprintf(ssid_line, sizeof(ssid_line), "SSID: %s", ssid_buf);
+    lv_label_set_text(lbl_ssid_info, ssid_line);
+    lv_obj_set_style_text_font(lbl_ssid_info, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_ssid_info, COLOR_TEXT_SECONDARY, 0);
+    lv_obj_align(lbl_ssid_info, LV_ALIGN_TOP_LEFT, 0, 44);
+
+    // Signal strength
+    int rssi = wifi_manager_get_rssi();
+    lv_obj_t *lbl_rssi = lv_label_create(diag_panel);
+    char rssi_line[32];
+    if (rssi != 0) {
+        const char *strength;
+        if (rssi >= -50) strength = "Excellent";
+        else if (rssi >= -60) strength = "Good";
+        else if (rssi >= -70) strength = "Fair";
+        else strength = "Weak";
+        snprintf(rssi_line, sizeof(rssi_line), "Signal: %d dBm (%s)", rssi, strength);
+    } else {
+        snprintf(rssi_line, sizeof(rssi_line), "Signal: --");
+    }
+    lv_label_set_text(lbl_rssi, rssi_line);
+    lv_obj_set_style_text_font(lbl_rssi, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_rssi, COLOR_TEXT_SECONDARY, 0);
+    lv_obj_align(lbl_rssi, LV_ALIGN_TOP_LEFT, 0, 62);
+
+    // IP Address
+    char ip_buf[32];
+    wifi_manager_get_ip_str(ip_buf, sizeof(ip_buf));
+    lv_obj_t *lbl_ip_info = lv_label_create(diag_panel);
+    char ip_line[48];
+    snprintf(ip_line, sizeof(ip_line), "IP: %s", ip_buf);
+    lv_label_set_text(lbl_ip_info, ip_line);
+    lv_obj_set_style_text_font(lbl_ip_info, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_ip_info, COLOR_TEXT_SECONDARY, 0);
+    lv_obj_align(lbl_ip_info, LV_ALIGN_TOP_LEFT, 0, 80);
+
+    // MAC Address
+    char mac_buf[20];
+    wifi_manager_get_mac_str(mac_buf, sizeof(mac_buf));
+    lv_obj_t *lbl_mac = lv_label_create(diag_panel);
+    char mac_line[40];
+    snprintf(mac_line, sizeof(mac_line), "MAC: %s", mac_buf);
+    lv_label_set_text(lbl_mac, mac_line);
+    lv_obj_set_style_text_font(lbl_mac, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_mac, COLOR_TEXT_SECONDARY, 0);
+    lv_obj_align(lbl_mac, LV_ALIGN_TOP_LEFT, 0, 98);
+
+    // Time sync status
+    lv_obj_t *lbl_time_sync = lv_label_create(diag_panel);
+    if (wifi_manager_is_time_synced()) {
+        lv_label_set_text(lbl_time_sync, "Time: Synced " LV_SYMBOL_OK);
+        lv_obj_set_style_text_color(lbl_time_sync, COLOR_SUCCESS, 0);
+    } else {
+        lv_label_set_text(lbl_time_sync, "Time: Not synced");
+        lv_obj_set_style_text_color(lbl_time_sync, COLOR_WARNING, 0);
+    }
+    lv_obj_set_style_text_font(lbl_time_sync, &lv_font_montserrat_14, 0);
+    lv_obj_align(lbl_time_sync, LV_ALIGN_TOP_LEFT, 0, 116);
+
+    // Input fields on the left
     ta_ssid = ui_create_text_input(screen_wifi, "WiFi Network (SSID):",
                                     "Enter SSID", state->settings.wifi_ssid,
-                                    50, 70, 400, false, on_textarea_clicked);
+                                    30, 70, 350, false, on_textarea_clicked);
 
     ta_password = ui_create_text_input(screen_wifi, "Password:",
                                         "Enter password", state->settings.wifi_password,
-                                        50, 150, 400, true, on_textarea_clicked);
+                                        30, 150, 350, true, on_textarea_clicked);
 
     lv_obj_t *btn_save = ui_create_button(screen_wifi, "Save", LV_SYMBOL_OK,
-                                           150, 50, COLOR_DAYZ_GREEN, on_wifi_save_clicked);
-    lv_obj_align(btn_save, LV_ALIGN_TOP_RIGHT, -50, 150);
+                                           100, 40, COLOR_DAYZ_GREEN, on_wifi_save_clicked);
+    lv_obj_align(btn_save, LV_ALIGN_TOP_LEFT, 120, 10);
 
     kb = ui_create_keyboard(screen_wifi, ta_ssid);
     lv_obj_add_event_cb(kb, on_keyboard_event, LV_EVENT_ALL, NULL);
@@ -1308,13 +1424,8 @@ static void update_ui(void) {
     }
     if (map_to_display) {
         lv_label_set_text(lbl_map_name, map_format_name(map_to_display));
-        // Load map background image from SD card
-        map_background_load(map_to_display);
     } else {
         lv_label_set_text(lbl_map_name, "");
-        // Hide background when no map
-        if (img_map_bg) lv_obj_add_flag(img_map_bg, LV_OBJ_FLAG_HIDDEN);
-        if (bg_overlay) lv_obj_add_flag(bg_overlay, LV_OBJ_FLAG_HIDDEN);
     }
 
     // Player count
@@ -1364,6 +1475,15 @@ static void update_ui(void) {
     } else {
         lv_label_set_text(lbl_status, "OFFLINE");
         lv_obj_set_style_text_color(lbl_status, COLOR_DANGER, 0);
+    }
+
+    // WiFi icon color
+    if (lbl_wifi_icon) {
+        if (wifi_manager_is_connected()) {
+            lv_obj_set_style_text_color(lbl_wifi_icon, COLOR_SUCCESS, 0);
+        } else {
+            lv_obj_set_style_text_color(lbl_wifi_icon, COLOR_DANGER, 0);
+        }
     }
 
     // Update timestamp
@@ -1548,23 +1668,59 @@ static void process_events(void) {
                     ESP_LOGI(TAG, "Swapping server: slot %d, index %d -> %d",
                              slot, old_active, new_active);
 
+                    // Save current main server data before switching
+                    secondary_server_status_t old_main_data = {
+                        .player_count = state->runtime.current_players,
+                        .max_players = state->runtime.max_players,
+                        .is_daytime = state->runtime.is_daytime,
+                        .valid = (state->runtime.current_players >= 0),
+                        .fetch_pending = false,
+                        .last_update_time = esp_timer_get_time() / 1000
+                    };
+                    strncpy(old_main_data.server_time, state->runtime.server_time,
+                            sizeof(old_main_data.server_time) - 1);
+                    strncpy(old_main_data.map_name, state->runtime.map_name,
+                            sizeof(old_main_data.map_name) - 1);
+                    memcpy(&old_main_data.trend, &state->runtime.main_trend, sizeof(trend_data_t));
+
+                    // Transfer secondary server data to main BEFORE switching
+                    secondary_server_status_t *sec = &state->runtime.secondary[slot];
+                    if (sec->valid) {
+                        state->runtime.current_players = sec->player_count;
+                        state->runtime.max_players = sec->max_players;
+                        strncpy(state->runtime.server_time, sec->server_time,
+                                sizeof(state->runtime.server_time) - 1);
+                        strncpy(state->runtime.map_name, sec->map_name,
+                                sizeof(state->runtime.map_name) - 1);
+                        state->runtime.is_daytime = sec->is_daytime;
+                        memcpy(&state->runtime.main_trend, &sec->trend, sizeof(trend_data_t));
+
+                        ESP_LOGI(TAG, "Transferred secondary->main: %d/%d players",
+                                 sec->player_count, sec->max_players);
+                    }
+
                     // Switch active server
                     state->settings.active_server_index = new_active;
 
                     // Switch history
                     history_switch_server(old_active, new_active);
 
-                    // Clear trend and secondary data, then recalculate
-                    app_state_clear_main_trend();
+                    // Clear secondary data and recalculate indices
                     app_state_clear_secondary_data();
                     app_state_update_secondary_indices();
 
-                    // Request refresh for new main server
-                    state->runtime.current_players = -1;
-                    state->runtime.server_time[0] = '\0';
-                    app_state_request_refresh();
+                    // Find which slot the old main server is now in and restore its data
+                    for (int i = 0; i < state->runtime.secondary_count; i++) {
+                        if (state->runtime.secondary_server_indices[i] == old_active) {
+                            memcpy(&state->runtime.secondary[i], &old_main_data,
+                                   sizeof(secondary_server_status_t));
+                            ESP_LOGI(TAG, "Transferred main->secondary[%d]: %d/%d players",
+                                     i, old_main_data.player_count, old_main_data.max_players);
+                            break;
+                        }
+                    }
 
-                    // Trigger secondary fetch refresh
+                    // Trigger secondary fetch for other secondary servers
                     secondary_fetch_refresh_now();
 
                     settings_save();
@@ -1639,8 +1795,10 @@ void app_main(void) {
     app_state_t *init_state = app_state_get();
     int active_srv = init_state->settings.active_server_index;
     if (sd_card_init() == ESP_OK) {
-        history_load_from_sd(active_srv);
+        // Load JSON history (primary source with full 7-day data)
+        history_load_json_for_server(active_srv);
     }
+    // Fallback to NVS if no JSON data loaded
     if (history_get_count() == 0) {
         history_load_from_nvs(active_srv);
     }
@@ -1692,6 +1850,14 @@ void app_main(void) {
             time_t now;
             time(&now);
             ESP_LOGI(TAG, "Time synced: %lu", (unsigned long)now);
+
+            // CRITICAL: Reload JSON history now that we have correct time!
+            // Initial load at boot used wrong time (device time was ~1970)
+            if (sd_card_is_mounted()) {
+                ESP_LOGI(TAG, "Reloading JSON history with correct time...");
+                history_load_json_for_server(state->settings.active_server_index);
+                ESP_LOGI(TAG, "History reloaded: %d entries", history_get_count());
+            }
         } else {
             ESP_LOGW(TAG, "Time sync timeout, timestamps may be wrong");
         }

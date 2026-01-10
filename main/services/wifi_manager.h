@@ -52,4 +52,31 @@ void wifi_manager_init_sntp(void);
  */
 bool wifi_manager_is_time_synced(void);
 
+/**
+ * Get WiFi signal strength (RSSI)
+ * @return RSSI in dBm, or 0 if not connected
+ */
+int wifi_manager_get_rssi(void);
+
+/**
+ * Get current IP address as string
+ * @param buf Output buffer
+ * @param buf_size Buffer size
+ */
+void wifi_manager_get_ip_str(char *buf, size_t buf_size);
+
+/**
+ * Get device MAC address as string
+ * @param buf Output buffer (at least 18 bytes)
+ * @param buf_size Buffer size
+ */
+void wifi_manager_get_mac_str(char *buf, size_t buf_size);
+
+/**
+ * Get connected SSID
+ * @param buf Output buffer
+ * @param buf_size Buffer size
+ */
+void wifi_manager_get_ssid(char *buf, size_t buf_size);
+
 #endif // WIFI_MANAGER_H

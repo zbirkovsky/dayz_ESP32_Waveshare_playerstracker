@@ -227,6 +227,17 @@ Uses the [BattleMetrics API](https://www.battlemetrics.com/developers/documentat
 
 ## Changelog
 
+### v2.4.0 - History Graph Fixes & WiFi Diagnostics
+- **CRITICAL FIX**: History graphs now display correct data for all time ranges
+  - Fixed JSON loading bug that filtered out historical entries
+  - 8-hour and 24-hour views now show accurate player counts
+  - JSON files are now the primary data source (NVS is backup)
+- **Boot-time history loading**: JSON history loads immediately on startup
+- **New utility function**: `history_clear_all_storage()` to reset all history data
+- **WiFi diagnostics**: Added helper functions for RSSI, IP address, and MAC address
+- **Development docs**: Added `ESP32_development.md` with build/flash instructions for Claude Code
+- **Build scripts**: Consolidated to single `build_and_flash.ps1` with PowerShell heredoc method
+
 ### v2.3.0 - Storage Layer Refactoring & SD Card Fix
 - **CRITICAL FIX**: SD card now works correctly with all partition formats
   - Fixed superfloppy (no partition table) detection

@@ -431,38 +431,21 @@ void history_switch_server(int old_server_index, int new_server_index) {
             ESP_LOGI(TAG, "JSON load returned %d entries", json_count);
 
             if (json_count > 0) {
-                // Find the latest timestamp in current history (if any)
-                uint32_t latest_ts = 0;
-                for (int i = 0; i < state->history.count; i++) {
-                    history_entry_t entry;
-                    if (history_get_entry(i, &entry) == 0 && entry.timestamp > latest_ts) {
-                        latest_ts = entry.timestamp;
-                    }
-                }
-
-                ESP_LOGI(TAG, "Current history: count=%d, latest_ts=%lu",
-                         state->history.count, (unsigned long)latest_ts);
-
-                // Add JSON entries to history
+                // Clear buffer and use JSON as primary source (it has complete history)
+                // JSON files are the authoritative source - NVS is just a backup
                 if (app_state_lock(100)) {
-                    int added = 0;
+                    state->history.head = 0;
+                    state->history.count = 0;
+
+                    // Load ALL JSON entries (already sorted oldest-first)
                     for (int i = 0; i < json_count && state->history.count < MAX_HISTORY_ENTRIES; i++) {
-                        // Add if: no existing data, OR this entry is newer than existing
-                        if (state->history.count == 0 || json_entries[i].timestamp > latest_ts) {
-                            state->history.entries[state->history.head] = json_entries[i];
-                            state->history.head = (state->history.head + 1) % MAX_HISTORY_ENTRIES;
-                            state->history.count++;
-                            added++;
-                            // Update latest_ts as we add entries
-                            if (json_entries[i].timestamp > latest_ts) {
-                                latest_ts = json_entries[i].timestamp;
-                            }
-                        }
+                        state->history.entries[state->history.head] = json_entries[i];
+                        state->history.head = (state->history.head + 1) % MAX_HISTORY_ENTRIES;
+                        state->history.count++;
                     }
                     app_state_unlock();
 
-                    ESP_LOGI(TAG, "Added %d entries from JSON (total now: %d)",
-                             added, state->history.count);
+                    ESP_LOGI(TAG, "Loaded %d entries from JSON history", json_count);
                 }
             }
             free(json_entries);
@@ -474,6 +457,53 @@ void history_switch_server(int old_server_index, int new_server_index) {
     }
 
     ESP_LOGI(TAG, "History switched to server %d (%d entries)", new_server_index, state->history.count);
+}
+
+void history_load_json_for_server(int server_index) {
+    if (!sd_card_is_mounted()) {
+        ESP_LOGW(TAG, "SD card not mounted - cannot load JSON history");
+        return;
+    }
+
+    app_state_t *state = app_state_get();
+
+    time_t now;
+    time(&now);
+    uint32_t end_time = (uint32_t)now;
+    uint32_t start_time = end_time - 604800;  // Last 7 days
+
+    ESP_LOGI(TAG, "Loading JSON history for server %d on boot", server_index);
+
+    // Allocate temp buffer for JSON entries
+    history_entry_t *json_entries = malloc(MAX_HISTORY_ENTRIES * sizeof(history_entry_t));
+    if (!json_entries) {
+        ESP_LOGE(TAG, "Failed to allocate memory for JSON entries buffer");
+        return;
+    }
+
+    int json_count = history_load_range_json(server_index, start_time, end_time,
+                                              json_entries, MAX_HISTORY_ENTRIES);
+    ESP_LOGI(TAG, "JSON load returned %d entries", json_count);
+
+    if (json_count > 0) {
+        // Clear buffer and load JSON as primary source
+        if (app_state_lock(100)) {
+            state->history.head = 0;
+            state->history.count = 0;
+
+            // Load ALL JSON entries (already sorted oldest-first)
+            for (int i = 0; i < json_count && state->history.count < MAX_HISTORY_ENTRIES; i++) {
+                state->history.entries[state->history.head] = json_entries[i];
+                state->history.head = (state->history.head + 1) % MAX_HISTORY_ENTRIES;
+                state->history.count++;
+            }
+            app_state_unlock();
+
+            ESP_LOGI(TAG, "Loaded %d entries from JSON history", state->history.count);
+        }
+    }
+
+    free(json_entries);
 }
 
 uint32_t history_range_to_seconds(history_range_t range) {
@@ -560,10 +590,7 @@ esp_err_t history_init_json_dir(int server_index) {
 }
 
 esp_err_t history_append_entry_json(int server_index, uint32_t ts, int16_t players) {
-    ESP_LOGI(TAG, "JSON append called: server=%d ts=%lu players=%d", server_index, (unsigned long)ts, players);
-
     if (!sd_card_is_mounted()) {
-        ESP_LOGW(TAG, "JSON append: SD card not mounted");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -583,27 +610,16 @@ esp_err_t history_append_entry_json(int server_index, uint32_t ts, int16_t playe
     char file_path[80];
     build_json_file_path(server_index, date_str, file_path, sizeof(file_path));
 
-    // Create directories - always try mkdir (ignore if exists)
-    int ret1 = mkdir(HISTORY_JSON_DIR, 0755);
-    int e1 = errno;
-    ESP_LOGI(TAG, "mkdir(%s) ret=%d errno=%d", HISTORY_JSON_DIR, ret1, e1);
-
-    int ret2 = mkdir(server_dir, 0755);
-    int e2 = errno;
-    ESP_LOGI(TAG, "mkdir(%s) ret=%d errno=%d", server_dir, ret2, e2);
+    // Create directories (ignore if exists)
+    mkdir(HISTORY_JSON_DIR, 0755);
+    mkdir(server_dir, 0755);
 
     // Verify directories exist
     struct stat st;
-    if (stat(HISTORY_JSON_DIR, &st) != 0) {
-        ESP_LOGE(TAG, "Root dir doesn't exist after mkdir: %s", HISTORY_JSON_DIR);
+    if (stat(HISTORY_JSON_DIR, &st) != 0 || stat(server_dir, &st) != 0) {
+        ESP_LOGE(TAG, "Failed to create history directories");
         return ESP_FAIL;
     }
-    if (stat(server_dir, &st) != 0) {
-        ESP_LOGE(TAG, "Server dir doesn't exist after mkdir: %s", server_dir);
-        return ESP_FAIL;
-    }
-
-    ESP_LOGI(TAG, "Opening file: %s", file_path);
 
     // Check if file exists (need to write header if new)
     bool file_exists = (stat(file_path, &st) == 0);
@@ -648,36 +664,6 @@ esp_err_t history_append_entry_json(int server_index, uint32_t ts, int16_t playe
     }
 
     fclose(f);
-
-    // Verify file was written by reading it back
-    struct stat verify_st;
-    if (stat(file_path, &verify_st) != 0) {
-        ESP_LOGE(TAG, "VERIFY FAILED: file doesn't exist after write! errno=%d", errno);
-        return ESP_FAIL;
-    }
-    ESP_LOGI(TAG, "JSON written OK: %s (size=%ld bytes)", file_path, (long)verify_st.st_size);
-
-    // DEBUG: Read back and print file contents
-    FILE *verify_f = fopen(file_path, "r");
-    if (verify_f) {
-        ESP_LOGI(TAG, "=== FILE CONTENTS: %s ===", file_path);
-        char line[256];
-        int line_count = 0;
-        while (fgets(line, sizeof(line), verify_f) && line_count < 10) {
-            // Remove newline for cleaner output
-            size_t len = strlen(line);
-            if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
-            ESP_LOGI(TAG, "  %s", line);
-            line_count++;
-        }
-        if (line_count >= 10) {
-            ESP_LOGI(TAG, "  ... (more lines)");
-        }
-        fclose(verify_f);
-        ESP_LOGI(TAG, "=== END FILE ===");
-    } else {
-        ESP_LOGE(TAG, "VERIFY READ FAILED: cannot open file! errno=%d", errno);
-    }
 
     return ESP_OK;
 }
@@ -860,4 +846,67 @@ int history_get_json_file_count(int server_index) {
     closedir(dir);
 
     return count;
+}
+
+void history_clear_all_storage(void) {
+    ESP_LOGW(TAG, "=== CLEARING ALL HISTORY DATA ===");
+
+    // Clear in-memory buffer
+    history_clear();
+
+    // Clear NVS for all servers
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+        for (int i = 0; i < 5; i++) {  // Up to 5 servers
+            char key_meta[16], key_data[16];
+            build_nvs_key(i, "meta", key_meta, sizeof(key_meta));
+            build_nvs_key(i, "data", key_data, sizeof(key_data));
+            nvs_erase_key(nvs, key_meta);
+            nvs_erase_key(nvs, key_data);
+        }
+        nvs_commit(nvs);
+        nvs_close(nvs);
+        ESP_LOGI(TAG, "NVS history cleared");
+    }
+
+    // Delete all JSON files from SD card
+    if (sd_card_is_mounted()) {
+        for (int server_idx = 0; server_idx < 5; server_idx++) {
+            char server_dir[64];
+            build_json_dir_path(server_idx, server_dir, sizeof(server_dir));
+
+            DIR *dir = opendir(server_dir);
+            if (!dir) continue;
+
+            char file_path[320];  // Large enough for server_dir + any filename
+            struct dirent *entry;
+            int deleted = 0;
+
+            while ((entry = readdir(dir)) != NULL) {
+                size_t name_len = strlen(entry->d_name);
+                // Only process .jsonl files with reasonable name length
+                if (name_len >= 7 && name_len < 64 && strcmp(entry->d_name + name_len - 6, ".jsonl") == 0) {
+                    snprintf(file_path, sizeof(file_path), "%s/%s", server_dir, entry->d_name);
+                    if (remove(file_path) == 0) {
+                        deleted++;
+                    }
+                }
+            }
+            closedir(dir);
+
+            if (deleted > 0) {
+                ESP_LOGI(TAG, "Deleted %d JSON files for server %d", deleted, server_idx);
+            }
+        }
+
+        // Also delete binary history files
+        remove("/sdcard/hist_0.bin");
+        remove("/sdcard/hist_1.bin");
+        remove("/sdcard/hist_2.bin");
+        remove("/sdcard/hist_3.bin");
+        remove("/sdcard/hist_4.bin");
+        ESP_LOGI(TAG, "Binary history files deleted");
+    }
+
+    ESP_LOGW(TAG, "=== ALL HISTORY DATA CLEARED ===");
 }
