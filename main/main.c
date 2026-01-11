@@ -49,6 +49,7 @@
 #include "drivers/usb_msc.h"
 #include "power/screensaver.h"
 #include "events/event_handler.h"
+#include "app_init.h"
 
 static const char *TAG = "main";
 
@@ -1367,143 +1368,35 @@ void ui_update_sd_status(void) {
 // ============== MAIN ==============
 
 void app_main(void) {
-    ESP_LOGI(TAG, "%s v%s Starting...", APP_NAME, APP_VERSION);
-
-    // Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    // Check if screen is being touched during boot
-    // Touch and hold screen during power-on to enter USB storage mode
-    if (usb_msc_touch_detected()) {
-        ESP_LOGI(TAG, "Touch detected on boot - entering USB Mass Storage mode");
-        if (usb_msc_init() == ESP_OK) {
-            usb_msc_task();  // This function never returns
-        } else {
-            ESP_LOGE(TAG, "USB MSC init failed, continuing with normal boot");
-        }
+    // Phase 1: System initialization (NVS, state, events, settings, buzzer, history)
+    if (app_init_system()) {
+        return;  // USB mass storage mode entered
     }
 
-    // Initialize application state
-    app_state_init();
-
-    // Initialize event system
-    events_init();
-
-    // Load settings
-    settings_load();
-
-    // Initialize buzzer and test
-    buzzer_init();
-    buzzer_test();
-
-    // Initialize history
-    history_init();
-
-    // Initialize display with LVGL and touch (includes I2C, CH422G, GT911 reset)
-    lv_display_t *disp = display_init();
+    // Phase 2: Display initialization (LVGL, touch, SD card, history loading)
+    lv_display_t *disp = app_init_display();
     if (!disp) {
-        ESP_LOGE(TAG, "Display initialization failed!");
         return;
     }
 
-    // TEST: Verify backlight control works - watch for screen flicker!
-    ESP_LOGW(TAG, "Running backlight test - watch for screen flicker over next 4 seconds...");
-    io_expander_test_backlight();
-
-    // Initialize UI styles
-    ui_styles_init();
-
-    // Now I2C is ready, try to load history from SD for the active server
-    app_state_t *init_state = app_state_get();
-    int active_srv = init_state->settings.active_server_index;
-    if (sd_card_init() == ESP_OK) {
-        // Load JSON history (primary source with full 7-day data)
-        history_load_json_for_server(active_srv);
-    }
-    // Fallback to NVS if no JSON data loaded
-    if (history_get_count() == 0) {
-        history_load_from_nvs(active_srv);
-    }
-
-    // Create main screen
+    // Phase 3: Create and show main screen
     if (lvgl_port_lock(1000)) {
         create_main_screen();
         lv_screen_load(screen_main);
         lvgl_port_unlock();
     }
 
-    // Get state reference
-    app_state_t *state = app_state_get();
-
     // Initialize screensaver module
     screensaver_init();
 
-    // First boot handling
-    if (state->settings.first_boot || strlen(state->settings.wifi_ssid) == 0) {
-        ESP_LOGI(TAG, "First boot detected");
-        // Default credentials for backward compatibility
-        strncpy(state->settings.wifi_ssid, "meshnetwork2131", sizeof(state->settings.wifi_ssid) - 1);
-        state->settings.wifi_ssid[sizeof(state->settings.wifi_ssid) - 1] = '\0';
-        strncpy(state->settings.wifi_password, "9696Polikut.", sizeof(state->settings.wifi_password) - 1);
-        state->settings.wifi_password[sizeof(state->settings.wifi_password) - 1] = '\0';
-        state->settings.first_boot = false;
-        settings_save();
-    }
-
-    // Initialize BattleMetrics API client (creates mutex for thread safety)
-    battlemetrics_init();
-
-    // Initialize WiFi
-    wifi_manager_init(state->settings.wifi_ssid, state->settings.wifi_password);
-
-    // Wait for WiFi
-    ESP_LOGI(TAG, "Waiting for WiFi...");
-    if (wifi_manager_wait_connected(WIFI_CONNECT_TIMEOUT_MS)) {
-        ESP_LOGI(TAG, "WiFi connected!");
-
-        // Wait for SNTP time sync (important for history timestamps)
-        ESP_LOGI(TAG, "Waiting for time sync...");
-        int sntp_retries = 0;
-        while (!wifi_manager_is_time_synced() && sntp_retries < 50) {  // Max 5 seconds
-            vTaskDelay(pdMS_TO_TICKS(100));
-            sntp_retries++;
-        }
-        if (wifi_manager_is_time_synced()) {
-            time_t now;
-            time(&now);
-            ESP_LOGI(TAG, "Time synced: %lu", (unsigned long)now);
-
-            // CRITICAL: Reload JSON history now that we have correct time!
-            // Initial load at boot used wrong time (device time was ~1970)
-            if (sd_card_is_mounted()) {
-                ESP_LOGI(TAG, "Reloading JSON history with correct time...");
-                history_load_json_for_server(state->settings.active_server_index);
-                ESP_LOGI(TAG, "History reloaded: %d entries", history_get_count());
-            }
-
-            // Check if restart data is stale and reset if needed
-            server_config_t *srv = app_state_get_active_server();
-            if (srv) {
-                restart_check_stale_and_reset(srv);
-            }
-        } else {
-            ESP_LOGW(TAG, "Time sync timeout, timestamps may be wrong");
-        }
-    } else {
-        ESP_LOGW(TAG, "WiFi connection timeout, will retry in background");
-    }
-
-    // Start secondary server fetch background task
-    secondary_fetch_init();
-    secondary_fetch_start();
+    // Phase 4: Network initialization (WiFi, time sync, secondary fetch)
+    app_init_network();
 
     // Give LVGL task time to process before starting main loop
     vTaskDelay(pdMS_TO_TICKS(500));
+
+    // Get state reference for main loop
+    app_state_t *state = app_state_get();
 
     // Initial UI update
     ui_update_main();
