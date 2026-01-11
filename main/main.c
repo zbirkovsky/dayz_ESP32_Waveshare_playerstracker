@@ -50,6 +50,7 @@
 #include "power/screensaver.h"
 #include "events/event_handler.h"
 #include "app_init.h"
+#include "ui/ui_context.h"
 
 static const char *TAG = "main";
 
@@ -85,54 +86,69 @@ static const char* map_format_name(const char *raw_map) {
     return formatted;
 }
 
-// ============== UI WIDGET POINTERS ==============
+// ============== UI WIDGET ACCESS MACROS ==============
+// Access widgets via ui_context for future extraction to separate modules
+#define UI_CTX (ui_context_get())
+
 // Screen objects
-static lv_obj_t *screen_main = NULL;
-static lv_obj_t *screen_settings = NULL;
-static lv_obj_t *screen_wifi = NULL;
-static lv_obj_t *screen_server = NULL;
-static lv_obj_t *screen_add_server = NULL;
-static lv_obj_t *screen_history = NULL;
+#define screen_main         (UI_CTX->screen_main)
+#define screen_settings     (UI_CTX->screen_settings)
+#define screen_wifi         (UI_CTX->screen_wifi)
+#define screen_server       (UI_CTX->screen_server)
+#define screen_add_server   (UI_CTX->screen_add_server)
+#define screen_history      (UI_CTX->screen_history)
 
 // Main screen widgets
-static lv_obj_t *main_card = NULL;
-static lv_obj_t *lbl_wifi_icon = NULL;
-static lv_obj_t *lbl_server = NULL;
-static lv_obj_t *lbl_server_time = NULL;
-static lv_obj_t *lbl_map_name = NULL;
-static lv_obj_t *day_night_indicator = NULL;
-static lv_obj_t *lbl_players = NULL;
-static lv_obj_t *lbl_max = NULL;
-static lv_obj_t *bar_players = NULL;
-static lv_obj_t *lbl_status = NULL;
-static lv_obj_t *lbl_update = NULL;
-static lv_obj_t *lbl_ip = NULL;
-static lv_obj_t *lbl_restart = NULL;
-static lv_obj_t *lbl_main_trend = NULL;
-static lv_obj_t *lbl_rank = NULL;
-static lv_obj_t *lbl_sd_status = NULL;
-static lv_obj_t *btn_prev_server = NULL;
-static lv_obj_t *btn_next_server = NULL;
+#define main_card           (UI_CTX->main_card)
+#define lbl_wifi_icon       (UI_CTX->lbl_wifi_icon)
+#define lbl_server          (UI_CTX->lbl_server)
+#define lbl_server_time     (UI_CTX->lbl_server_time)
+#define lbl_map_name        (UI_CTX->lbl_map_name)
+#define day_night_indicator (UI_CTX->day_night_indicator)
+#define lbl_players         (UI_CTX->lbl_players)
+#define lbl_max             (UI_CTX->lbl_max)
+#define bar_players         (UI_CTX->bar_players)
+#define lbl_status          (UI_CTX->lbl_status)
+#define lbl_update          (UI_CTX->lbl_update)
+#define lbl_ip              (UI_CTX->lbl_ip)
+#define lbl_restart         (UI_CTX->lbl_restart)
+#define lbl_main_trend      (UI_CTX->lbl_main_trend)
+#define lbl_rank            (UI_CTX->lbl_rank)
+#define lbl_sd_status       (UI_CTX->lbl_sd_status)
+#define btn_prev_server     (UI_CTX->btn_prev_server)
+#define btn_next_server     (UI_CTX->btn_next_server)
 
 // Settings widgets
-static lv_obj_t *kb = NULL;
-static lv_obj_t *kb_add = NULL;
-static lv_obj_t *ta_ssid = NULL;
-static lv_obj_t *ta_password = NULL;
-static lv_obj_t *ta_server_id = NULL;
-static lv_obj_t *ta_server_name = NULL;
-static lv_obj_t *slider_refresh = NULL;
-static lv_obj_t *lbl_refresh_val = NULL;
-static lv_obj_t *dropdown_screen_off = NULL;
-static lv_obj_t *slider_alert = NULL;
-static lv_obj_t *lbl_alert_val = NULL;
-static lv_obj_t *sw_alerts = NULL;
-static lv_obj_t *sw_restart_manual = NULL;
-static lv_obj_t *roller_restart_hour = NULL;
-static lv_obj_t *roller_restart_min = NULL;
-static lv_obj_t *dropdown_restart_interval = NULL;
-static lv_obj_t *dropdown_map = NULL;  // Map selection dropdown for Add Server
-static lv_obj_t *dropdown_map_settings = NULL;  // Map selection dropdown for Server Settings
+#define kb                      (UI_CTX->kb)
+#define kb_add                  (UI_CTX->kb_add)
+#define ta_ssid                 (UI_CTX->ta_ssid)
+#define ta_password             (UI_CTX->ta_password)
+#define ta_server_id            (UI_CTX->ta_server_id)
+#define ta_server_name          (UI_CTX->ta_server_name)
+#define slider_refresh          (UI_CTX->slider_refresh)
+#define lbl_refresh_val         (UI_CTX->lbl_refresh_val)
+#define dropdown_screen_off     (UI_CTX->dropdown_screen_off)
+#define slider_alert            (UI_CTX->slider_alert)
+#define lbl_alert_val           (UI_CTX->lbl_alert_val)
+#define sw_alerts               (UI_CTX->sw_alerts)
+#define sw_restart_manual       (UI_CTX->sw_restart_manual)
+#define roller_restart_hour     (UI_CTX->roller_restart_hour)
+#define roller_restart_min      (UI_CTX->roller_restart_min)
+#define dropdown_restart_interval (UI_CTX->dropdown_restart_interval)
+#define dropdown_map            (UI_CTX->dropdown_map)
+#define dropdown_map_settings   (UI_CTX->dropdown_map_settings)
+
+// History widgets
+#define chart_history       (UI_CTX->chart_history)
+#define chart_series        (UI_CTX->chart_series)
+#define lbl_history_legend  (UI_CTX->lbl_history_legend)
+#define lbl_y_axis          (UI_CTX->lbl_y_axis)
+#define lbl_x_axis          (UI_CTX->lbl_x_axis)
+
+// Multi-server watch widgets
+#define secondary_container (UI_CTX->secondary_container)
+#define secondary_boxes     (UI_CTX->secondary_boxes)
+#define add_server_boxes    (UI_CTX->add_server_boxes)
 
 // Map options for dropdown (internal names used for storage)
 static const char *map_options_display = "Chernarus\nLivonia\nSakhal\nDeer Isle\nNamalsk\nEsseker\nTakistan\nBanov\nExclusion Zone\nOther";
@@ -152,18 +168,6 @@ static int get_map_index(const char *internal_name) {
     }
     return MAP_OPTIONS_COUNT - 1;  // "Other"
 }
-
-// History widgets
-static lv_obj_t *chart_history = NULL;
-static lv_chart_series_t *chart_series = NULL;
-static lv_obj_t *lbl_history_legend = NULL;
-static lv_obj_t *lbl_y_axis[5] = {NULL};  // Y-axis labels: 0, 15, 30, 45, 60
-static lv_obj_t *lbl_x_axis[5] = {NULL};  // X-axis time labels
-
-// Multi-server watch widgets
-static lv_obj_t *secondary_container = NULL;
-static secondary_box_widgets_t secondary_boxes[MAX_SECONDARY_SERVERS];
-static lv_obj_t *add_server_boxes[MAX_SECONDARY_SERVERS];
 
 // ============== FORWARD DECLARATIONS ==============
 // UI functions declared in ui/ui_main.h: ui_update_main, ui_update_sd_status, ui_switch_screen, ui_update_secondary
@@ -1378,6 +1382,9 @@ void app_main(void) {
     if (!disp) {
         return;
     }
+
+    // Initialize UI context (holds all widget pointers)
+    ui_context_init();
 
     // Phase 3: Create and show main screen
     if (lvgl_port_lock(1000)) {

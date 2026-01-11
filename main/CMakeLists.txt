@@ -25,6 +25,7 @@ idf_component_register(
         "ui/ui_widgets.c"
         "ui/ui_alerts.c"
         "ui/ui_callbacks.c"
+        "ui/ui_context.c"
         "ui/map_background.c"
         "ui/screen_history.c"
         "power/screensaver.c"
