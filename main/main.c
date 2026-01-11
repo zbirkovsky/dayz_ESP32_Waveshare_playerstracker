@@ -376,7 +376,9 @@ static void on_screen_off_changed(lv_event_t *e) {
     int idx = lv_dropdown_get_selected(dropdown);
     if (idx >= 0 && idx < screen_off_count) {
         state->settings.screensaver_timeout_sec = screen_off_values[idx];
-        ESP_LOGI(TAG, "Screen off timeout set to %d sec", state->settings.screensaver_timeout_sec);
+        // Reset activity timer so new timeout starts from now
+        state->ui.last_activity_time = esp_timer_get_time() / 1000;
+        ESP_LOGI(TAG, "Screen off timeout set to %d sec, activity timer reset", state->settings.screensaver_timeout_sec);
         settings_save();
     }
 }
@@ -1893,6 +1895,7 @@ void app_main(void) {
             // Only update UI if not in screensaver mode
             if (!state->ui.screensaver_active) {
                 update_ui();
+                update_secondary_boxes();  // Also update secondary servers display
                 update_sd_status();
             }
         }
@@ -1937,13 +1940,13 @@ void app_main(void) {
                     if (touch_state == LV_INDEV_STATE_PRESSED) {
                         // Wake from screensaver on any touch (but not if waiting for release)
                         if (state->ui.screensaver_active && !wait_for_release) {
-                            ESP_LOGI(TAG, "Touch detected - waking from screensaver");
+                            ESP_LOGI(TAG, "Touch wake from screensaver");
                             display_set_backlight(true);
                             state->ui.screensaver_active = false;
                             state->ui.last_activity_time = now;
                             state->ui.long_press_tracking = false;
                         } else if (!state->ui.screensaver_active) {
-                            // Track long-press for screen-off
+                            // Track long-press for screen-off and reset activity
                             state->ui.last_activity_time = now;
                             if (!state->ui.long_press_tracking) {
                                 state->ui.long_press_start_time = now;
