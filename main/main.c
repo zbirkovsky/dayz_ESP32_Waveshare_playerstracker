@@ -40,10 +40,15 @@
 #include "services/secondary_fetch.h"
 #include "services/restart_manager.h"
 #include "services/alert_manager.h"
+#include "services/server_query.h"
 #include "ui/ui_styles.h"
 #include "ui/ui_widgets.h"
 #include "ui/screen_history.h"
+#include "ui/ui_main.h"
+#include "ui/ui_callbacks.h"
 #include "drivers/usb_msc.h"
+#include "power/screensaver.h"
+#include "events/event_handler.h"
 
 static const char *TAG = "main";
 
@@ -160,187 +165,17 @@ static secondary_box_widgets_t secondary_boxes[MAX_SECONDARY_SERVERS];
 static lv_obj_t *add_server_boxes[MAX_SECONDARY_SERVERS];
 
 // ============== FORWARD DECLARATIONS ==============
-static void update_ui(void);
-static void update_sd_status(void);
+// UI functions declared in ui/ui_main.h: ui_update_main, ui_update_sd_status, ui_switch_screen, ui_update_secondary
+// Event handler in events/event_handler.h: event_handler_process
 static void create_main_screen(void);
 static void create_settings_screen(void);
 static void create_wifi_settings_screen(void);
 static void create_server_settings_screen(void);
 static void create_add_server_screen(void);
 static void create_history_screen(void);
-static void switch_to_screen(screen_id_t screen);
-static void process_events(void);
-static void update_secondary_boxes(void);
 static void create_secondary_boxes(void);
 
-// ============== SERVER QUERY ==============
-
-static void query_server_status(void) {
-    app_state_t *state = app_state_get();
-
-    if (!wifi_manager_is_connected()) {
-        ESP_LOGW(TAG, "WiFi not connected, skipping query");
-        return;
-    }
-
-    if (state->settings.server_count == 0) return;
-
-    server_config_t *srv = app_state_get_active_server();
-    if (!srv) return;
-
-    server_status_t status;
-    esp_err_t err = battlemetrics_query(srv->server_id, &status);
-
-    if (err == ESP_OK && status.players >= 0) {
-        // Update runtime state
-        app_state_update_player_data(status.players, status.max_players,
-                                      status.server_time, status.is_daytime,
-                                      status.map_name);
-
-        // Update server config if needed
-        if (status.max_players > 0) {
-            srv->max_players = status.max_players;
-        }
-        if (strlen(status.ip_address) > 0) {
-            strncpy(srv->ip_address, status.ip_address, sizeof(srv->ip_address) - 1);
-            srv->port = status.port;
-        }
-        // Store server rank
-        state->runtime.server_rank = status.rank;
-
-        // Update timestamp
-        time_t now;
-        struct tm timeinfo;
-        time(&now);
-        localtime_r(&now, &timeinfo);
-        snprintf(state->runtime.last_update, sizeof(state->runtime.last_update),
-                 "%02d:%02d:%02d CET", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-
-        ESP_LOGI(TAG, "Players: %d/%d", status.players, status.max_players);
-
-        // Add to history
-        history_add_entry(status.players);
-
-        // Track trend for main server
-        app_state_add_main_trend_point(status.players);
-
-        // Check for alerts
-        alert_check();
-
-        // Check for server restart
-        restart_check_for_restart(srv, status.players);
-    } else {
-        ESP_LOGE(TAG, "Query failed: %s", battlemetrics_get_last_error());
-    }
-}
-
-
 // ============== UI CALLBACKS ==============
-
-static void on_refresh_clicked(lv_event_t *e) {
-    (void)e;
-    app_state_request_refresh();
-}
-
-static void on_card_clicked(lv_event_t *e) {
-    (void)e;
-    app_state_request_refresh();
-}
-
-static void on_settings_clicked(lv_event_t *e) {
-    (void)e;
-    events_post_screen_change(SCREEN_SETTINGS);
-}
-
-static void on_history_clicked(lv_event_t *e) {
-    (void)e;
-    events_post_screen_change(SCREEN_HISTORY);
-}
-
-/**
- * Safely set screensaver state with mutex protection
- * This ensures hardware and software state stay synchronized
- * @param active true to turn screen off, false to turn on
- * @return true if state changed successfully, false on failure
- */
-static bool screensaver_set_active(bool active) {
-    if (app_state_lock(50)) {
-        app_state_t *state = app_state_get();
-        if (state->ui.screensaver_active != active) {
-            esp_err_t ret = display_set_backlight(!active);
-            if (ret == ESP_OK) {
-                state->ui.screensaver_active = active;
-                state->ui.last_activity_time = esp_timer_get_time() / 1000;
-                ESP_LOGI(TAG, "Screensaver %s", active ? "ON (screen off)" : "OFF (screen on)");
-                app_state_unlock();
-                return true;
-            } else {
-                ESP_LOGE(TAG, "Failed to change backlight, screensaver state unchanged");
-            }
-        }
-        app_state_unlock();
-    } else {
-        ESP_LOGW(TAG, "Could not lock state for screensaver change");
-    }
-    return false;
-}
-
-// Global touch handler for screensaver wake (LVGL events)
-// NOTE: Activity time is tracked in main loop polling for consistency
-static void on_screen_touch_pressed(lv_event_t *e) {
-    (void)e;
-    app_state_t *state = app_state_get();
-
-    ESP_LOGW(TAG, "LVGL touch event fired (ss_active=%d)", state->ui.screensaver_active);
-
-    // Wake from screensaver if active (use helper for safe state change)
-    if (state->ui.screensaver_active) {
-        ESP_LOGI(TAG, "LVGL callback waking from screensaver");
-        screensaver_set_active(false);
-        state->ui.long_press_tracking = false;  // Don't start long-press tracking when waking
-    } else {
-        // Start tracking for potential long-press screen-off
-        state->ui.long_press_start_time = esp_timer_get_time() / 1000;
-        state->ui.long_press_tracking = true;
-    }
-}
-
-// Touch release handler - stop long-press tracking
-static void on_screen_touch_released(lv_event_t *e) {
-    (void)e;
-    app_state_t *state = app_state_get();
-    state->ui.long_press_tracking = false;
-}
-
-static void on_back_clicked(lv_event_t *e) {
-    (void)e;
-    events_post_screen_change(SCREEN_MAIN);
-}
-
-static void on_prev_server_clicked(lv_event_t *e) {
-    (void)e;
-    events_post_simple(EVT_SERVER_PREV);
-}
-
-static void on_next_server_clicked(lv_event_t *e) {
-    (void)e;
-    events_post_simple(EVT_SERVER_NEXT);
-}
-
-static void on_wifi_settings_clicked(lv_event_t *e) {
-    (void)e;
-    events_post_screen_change(SCREEN_WIFI_SETTINGS);
-}
-
-static void on_server_settings_clicked(lv_event_t *e) {
-    (void)e;
-    events_post_screen_change(SCREEN_SERVER_SETTINGS);
-}
-
-static void on_add_server_clicked(lv_event_t *e) {
-    (void)e;
-    events_post_screen_change(SCREEN_ADD_SERVER);
-}
 
 static void on_keyboard_event(lv_event_t *e) {
     lv_obj_t *obj = lv_event_get_target(e);
@@ -428,53 +263,6 @@ static void on_alert_slider_changed(lv_event_t *e) {
     }
 }
 
-static void on_alerts_switch_changed(lv_event_t *e) {
-    server_config_t *srv = app_state_get_active_server();
-    if (!srv) return;
-
-    lv_obj_t *sw = lv_event_get_target(e);
-    srv->alerts_enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    settings_save();
-}
-
-static void on_restart_hour_changed(lv_event_t *e) {
-    server_config_t *srv = app_state_get_active_server();
-    if (!srv) return;
-
-    lv_obj_t *roller = lv_event_get_target(e);
-    srv->restart_hour = lv_roller_get_selected(roller);
-    settings_save();
-}
-
-static void on_restart_min_changed(lv_event_t *e) {
-    server_config_t *srv = app_state_get_active_server();
-    if (!srv) return;
-
-    lv_obj_t *roller = lv_event_get_target(e);
-    srv->restart_minute = lv_roller_get_selected(roller) * 5;
-    settings_save();
-}
-
-static void on_restart_interval_changed(lv_event_t *e) {
-    server_config_t *srv = app_state_get_active_server();
-    if (!srv) return;
-
-    lv_obj_t *dd = lv_event_get_target(e);
-    int sel = lv_dropdown_get_selected(dd);
-    const uint8_t intervals[] = {4, 6, 8, 12};
-    srv->restart_interval_hours = intervals[sel];
-    settings_save();
-}
-
-static void on_restart_manual_switch_changed(lv_event_t *e) {
-    server_config_t *srv = app_state_get_active_server();
-    if (!srv) return;
-
-    lv_obj_t *sw = lv_event_get_target(e);
-    srv->manual_restart_set = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    settings_save();
-}
-
 static void on_server_save_clicked(lv_event_t *e) {
     (void)e;
     if (lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) {
@@ -491,16 +279,6 @@ static void on_server_save_clicked(lv_event_t *e) {
                                map_name);
         lvgl_port_unlock();
     }
-}
-
-static void on_delete_server_clicked(lv_event_t *e) {
-    (void)e;
-    app_state_t *state = app_state_get();
-    app_event_t evt = {
-        .type = EVT_SERVER_DELETE,
-        .data.server_index = state->settings.active_server_index
-    };
-    events_post(&evt);
 }
 
 static void on_map_settings_changed(lv_event_t *e) {
@@ -541,36 +319,26 @@ static void on_history_range_clicked(lv_event_t *e) {
     screen_history_refresh();
 }
 
-static void on_secondary_box_clicked(lv_event_t *e) {
-    int slot = (int)(intptr_t)lv_event_get_user_data(e);
-    events_post_secondary_click(slot);
-}
-
-static void on_add_server_from_main_clicked(lv_event_t *e) {
-    (void)e;
-    events_post_screen_change(SCREEN_ADD_SERVER);
-}
-
 // ============== UI SCREENS ==============
 
 static void create_main_screen(void) {
     screen_main = ui_create_screen();
 
     // Add global touch handlers for screensaver and long-press screen-off
-    lv_obj_add_event_cb(screen_main, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(screen_main, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(screen_main, screensaver_get_touch_pressed_cb(), LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_main, screensaver_get_touch_released_cb(), LV_EVENT_RELEASED, NULL);
 
     // Main card - compacted height for multi-server view
     main_card = ui_create_card(screen_main, 760, MAIN_CARD_HEIGHT_COMPACT);
     lv_obj_align(main_card, LV_ALIGN_TOP_MID, 0, 65);
     lv_obj_add_flag(main_card, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(main_card, on_card_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(main_card, cb_card_clicked, LV_EVENT_CLICKED, NULL);
 
     // Settings button
-    ui_create_icon_button(screen_main, LV_SYMBOL_SETTINGS, 20, 10, on_settings_clicked);
+    ui_create_icon_button(screen_main, LV_SYMBOL_SETTINGS, 20, 10, cb_settings_clicked);
 
     // History button
-    ui_create_icon_button(screen_main, LV_SYMBOL_IMAGE, 80, 10, on_history_clicked);
+    ui_create_icon_button(screen_main, LV_SYMBOL_IMAGE, 80, 10, cb_history_clicked);
 
     // WiFi status icon (clickable - opens WiFi settings)
     lv_obj_t *wifi_btn = lv_btn_create(screen_main);
@@ -579,7 +347,7 @@ static void create_main_screen(void) {
     lv_obj_set_style_bg_opa(wifi_btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(wifi_btn, 0, 0);
     lv_obj_set_style_border_width(wifi_btn, 0, 0);
-    lv_obj_add_event_cb(wifi_btn, on_wifi_settings_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(wifi_btn, cb_wifi_settings_clicked, LV_EVENT_CLICKED, NULL);
 
     lbl_wifi_icon = lv_label_create(wifi_btn);
     lv_label_set_text(lbl_wifi_icon, LV_SYMBOL_WIFI);
@@ -589,9 +357,9 @@ static void create_main_screen(void) {
 
     // Server navigation
     btn_prev_server = ui_create_icon_button(screen_main, LV_SYMBOL_LEFT,
-                                             LCD_WIDTH/2 - 125, 10, on_prev_server_clicked);
+                                             LCD_WIDTH/2 - 125, 10, cb_prev_server_clicked);
     btn_next_server = ui_create_icon_button(screen_main, LV_SYMBOL_RIGHT,
-                                             LCD_WIDTH/2 + 75, 10, on_next_server_clicked);
+                                             LCD_WIDTH/2 + 75, 10, cb_next_server_clicked);
 
     // SD card status indicator
     lbl_sd_status = lv_label_create(screen_main);
@@ -606,7 +374,7 @@ static void create_main_screen(void) {
     lv_obj_align(btn_refresh, LV_ALIGN_TOP_RIGHT, -20, 10);
     lv_obj_set_style_bg_color(btn_refresh, COLOR_BUTTON_PRIMARY, 0);
     lv_obj_set_style_radius(btn_refresh, UI_BUTTON_RADIUS, 0);
-    lv_obj_add_event_cb(btn_refresh, on_refresh_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_refresh, cb_refresh_clicked, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *lbl_refresh = lv_label_create(btn_refresh);
     lv_label_set_text(lbl_refresh, LV_SYMBOL_REFRESH " Refresh");
@@ -730,9 +498,9 @@ static void create_settings_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_settings = ui_create_screen();
-    lv_obj_add_event_cb(screen_settings, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(screen_settings, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
-    ui_create_back_button(screen_settings, on_back_clicked);
+    lv_obj_add_event_cb(screen_settings, screensaver_get_touch_pressed_cb(), LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_settings, screensaver_get_touch_released_cb(), LV_EVENT_RELEASED, NULL);
+    ui_create_back_button(screen_settings, cb_back_clicked);
     ui_create_title(screen_settings, "Settings");
 
     lv_obj_t *cont = ui_create_scroll_container(screen_settings, 700, 400);
@@ -740,11 +508,11 @@ static void create_settings_screen(void) {
 
     // WiFi button
     ui_create_menu_button(cont, "WiFi Settings", LV_SYMBOL_WIFI,
-                          COLOR_BUTTON_PRIMARY, on_wifi_settings_clicked);
+                          COLOR_BUTTON_PRIMARY, cb_wifi_settings_clicked);
 
     // Server button
     ui_create_menu_button(cont, "Server Settings", LV_SYMBOL_LIST,
-                          COLOR_SUCCESS, on_server_settings_clicked);
+                          COLOR_SUCCESS, cb_server_settings_clicked);
 
     // Refresh interval
     lv_obj_t *refresh_row = ui_create_row(cont, 660, 55);
@@ -785,7 +553,7 @@ static void create_settings_screen(void) {
     server_config_t *srv = app_state_get_active_server();
     bool alerts_on = srv ? srv->alerts_enabled : false;
     sw_alerts = ui_create_switch(alerts_row, "Alerts Enabled:", alerts_on,
-                                  on_alerts_switch_changed);
+                                  cb_alerts_switch_changed);
 
     // Alert threshold
     lv_obj_t *threshold_row = ui_create_row(cont, 660, 55);
@@ -806,7 +574,7 @@ static void create_settings_screen(void) {
     lv_obj_t *restart_enable_row = ui_create_row(cont, 660, 45);
     bool manual_on = srv ? srv->manual_restart_set : false;
     sw_restart_manual = ui_create_switch(restart_enable_row, "Manual Schedule:",
-                                          manual_on, on_restart_manual_switch_changed);
+                                          manual_on, cb_restart_manual_switch_changed);
 
     // Restart time row
     lv_obj_t *restart_time_row = ui_create_row(cont, 660, 60);
@@ -826,7 +594,7 @@ static void create_settings_screen(void) {
     lv_obj_align(roller_restart_hour, LV_ALIGN_CENTER, -20, 0);
     uint8_t srv_hour = srv ? srv->restart_hour : 0;
     lv_roller_set_selected(roller_restart_hour, srv_hour, LV_ANIM_OFF);
-    lv_obj_add_event_cb(roller_restart_hour, on_restart_hour_changed, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(roller_restart_hour, cb_restart_hour_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t *lbl_colon = lv_label_create(restart_time_row);
     lv_label_set_text(lbl_colon, ":");
@@ -843,7 +611,7 @@ static void create_settings_screen(void) {
     lv_obj_align(roller_restart_min, LV_ALIGN_CENTER, 70, 0);
     uint8_t srv_min = srv ? srv->restart_minute : 0;
     lv_roller_set_selected(roller_restart_min, srv_min / 5, LV_ANIM_OFF);
-    lv_obj_add_event_cb(roller_restart_min, on_restart_min_changed, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(roller_restart_min, cb_restart_min_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t *lbl_interval = lv_label_create(restart_time_row);
     lv_label_set_text(lbl_interval, "every");
@@ -861,7 +629,7 @@ static void create_settings_screen(void) {
     else if (srv_interval == 8) interval_idx = 2;
     else if (srv_interval == 12) interval_idx = 3;
     lv_dropdown_set_selected(dropdown_restart_interval, interval_idx);
-    lv_obj_add_event_cb(dropdown_restart_interval, on_restart_interval_changed,
+    lv_obj_add_event_cb(dropdown_restart_interval, cb_restart_interval_changed,
                         LV_EVENT_VALUE_CHANGED, NULL);
 }
 
@@ -869,9 +637,9 @@ static void create_wifi_settings_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_wifi = ui_create_screen();
-    lv_obj_add_event_cb(screen_wifi, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(screen_wifi, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
-    ui_create_back_button(screen_wifi, on_back_clicked);
+    lv_obj_add_event_cb(screen_wifi, screensaver_get_touch_pressed_cb(), LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_wifi, screensaver_get_touch_released_cb(), LV_EVENT_RELEASED, NULL);
+    ui_create_back_button(screen_wifi, cb_back_clicked);
     ui_create_title(screen_wifi, "WiFi Settings");
 
     // Diagnostics panel on the right side
@@ -989,9 +757,9 @@ static void create_server_settings_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_server = ui_create_screen();
-    lv_obj_add_event_cb(screen_server, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(screen_server, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
-    ui_create_back_button(screen_server, on_back_clicked);
+    lv_obj_add_event_cb(screen_server, screensaver_get_touch_pressed_cb(), LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_server, screensaver_get_touch_released_cb(), LV_EVENT_RELEASED, NULL);
+    ui_create_back_button(screen_server, cb_back_clicked);
     ui_create_title(screen_server, "Server Settings");
 
     lv_obj_t *list = ui_create_scroll_container(screen_server, 700, 250);
@@ -1049,21 +817,21 @@ static void create_server_settings_screen(void) {
     lv_obj_add_event_cb(dropdown_map_settings, on_map_settings_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t *btn_add = ui_create_button(screen_server, "Add Server", LV_SYMBOL_PLUS,
-                                          200, 50, COLOR_DAYZ_GREEN, on_add_server_clicked);
+                                          200, 50, COLOR_DAYZ_GREEN, cb_add_server_clicked);
     lv_obj_align(btn_add, LV_ALIGN_BOTTOM_LEFT, 50, -20);
 
     if (state->settings.server_count > 1) {
         lv_obj_t *btn_del = ui_create_button(screen_server, "Delete Active", LV_SYMBOL_TRASH,
-                                              200, 50, COLOR_ALERT_RED, on_delete_server_clicked);
+                                              200, 50, COLOR_ALERT_RED, cb_delete_server_clicked);
         lv_obj_align(btn_del, LV_ALIGN_BOTTOM_RIGHT, -50, -20);
     }
 }
 
 static void create_add_server_screen(void) {
     screen_add_server = ui_create_screen();
-    lv_obj_add_event_cb(screen_add_server, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(screen_add_server, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
-    ui_create_back_button(screen_add_server, on_back_clicked);
+    lv_obj_add_event_cb(screen_add_server, screensaver_get_touch_pressed_cb(), LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_add_server, screensaver_get_touch_released_cb(), LV_EVENT_RELEASED, NULL);
+    ui_create_back_button(screen_add_server, cb_back_clicked);
     ui_create_title(screen_add_server, "Add Server");
 
     ta_server_id = ui_create_text_input(screen_add_server, "BattleMetrics Server ID:",
@@ -1106,9 +874,9 @@ static void create_history_screen(void) {
     app_state_t *state = app_state_get();
 
     screen_history = ui_create_screen();
-    lv_obj_add_event_cb(screen_history, on_screen_touch_pressed, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(screen_history, on_screen_touch_released, LV_EVENT_RELEASED, NULL);
-    ui_create_back_button(screen_history, on_back_clicked);
+    lv_obj_add_event_cb(screen_history, screensaver_get_touch_pressed_cb(), LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_history, screensaver_get_touch_released_cb(), LV_EVENT_RELEASED, NULL);
+    ui_create_back_button(screen_history, cb_back_clicked);
     ui_create_title(screen_history, "Player History");
 
     // Time range buttons
@@ -1233,7 +1001,7 @@ static void create_secondary_boxes(void) {
                 secondary_container,
                 SECONDARY_BOX_WIDTH,
                 SECONDARY_BOX_HEIGHT,
-                on_secondary_box_clicked,
+                cb_secondary_box_clicked,
                 (void*)(intptr_t)i
             );
             lv_obj_set_pos(secondary_boxes[i].container, x_pos, 2);
@@ -1244,7 +1012,7 @@ static void create_secondary_boxes(void) {
                 secondary_container,
                 SECONDARY_BOX_WIDTH,
                 SECONDARY_BOX_HEIGHT,
-                on_add_server_from_main_clicked
+                cb_add_server_from_main_clicked
             );
             lv_obj_set_pos(add_server_boxes[i], x_pos, 2);
             memset(&secondary_boxes[i], 0, sizeof(secondary_box_widgets_t));
@@ -1256,7 +1024,7 @@ static void create_secondary_boxes(void) {
     }
 }
 
-static void update_secondary_boxes(void) {
+void ui_update_secondary(void) {
     app_state_t *state = app_state_get();
 
     if (!secondary_container) return;
@@ -1323,7 +1091,7 @@ static void update_secondary_boxes(void) {
 
 // ============== SCREEN NAVIGATION ==============
 
-static void switch_to_screen(screen_id_t screen) {
+void ui_switch_screen(screen_id_t screen) {
     if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
 
     // Delete old screens to free memory (except main)
@@ -1363,7 +1131,7 @@ static void switch_to_screen(screen_id_t screen) {
         case SCREEN_MAIN:
             if (!screen_main) create_main_screen();
             lv_screen_load(screen_main);
-            update_ui();
+            ui_update_main();
             break;
         case SCREEN_SETTINGS:
             create_settings_screen();
@@ -1394,7 +1162,7 @@ static void switch_to_screen(screen_id_t screen) {
 
 // ============== UPDATE UI ==============
 
-static void update_ui(void) {
+void ui_update_main(void) {
     app_state_t *state = app_state_get();
 
     if (app_state_get_current_screen() != SCREEN_MAIN) return;
@@ -1569,7 +1337,7 @@ static void update_ui(void) {
     lvgl_port_unlock();
 }
 
-static void update_sd_status(void) {
+void ui_update_sd_status(void) {
     if (!lbl_sd_status) return;
     if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
 
@@ -1594,192 +1362,6 @@ static void update_sd_status(void) {
     }
 
     lvgl_port_unlock();
-}
-
-// ============== EVENT PROCESSING ==============
-
-static void process_events(void) {
-    app_event_t evt;
-    app_state_t *state = app_state_get();
-
-    while (events_receive(&evt)) {
-        switch (evt.type) {
-            case EVT_SCREEN_CHANGE:
-                switch_to_screen(evt.data.screen);
-                break;
-
-            case EVT_WIFI_SAVE:
-                settings_save_wifi(evt.data.wifi.ssid, evt.data.wifi.password);
-                wifi_manager_reconnect(evt.data.wifi.ssid, evt.data.wifi.password);
-                switch_to_screen(SCREEN_SETTINGS);
-                break;
-
-            case EVT_SERVER_ADD: {
-                int new_idx = settings_add_server(evt.data.server.server_id, evt.data.server.display_name);
-                // Set map_name on the newly added server
-                if (new_idx >= 0 && evt.data.server.map_name[0] != '\0') {
-                    if (app_state_lock(100)) {
-                        strncpy(state->settings.servers[new_idx].map_name,
-                                evt.data.server.map_name,
-                                sizeof(state->settings.servers[new_idx].map_name) - 1);
-                        app_state_unlock();
-                        settings_save();  // Save with map name
-                    }
-                }
-                state->runtime.current_players = -1;
-                state->runtime.server_time[0] = '\0';
-                app_state_clear_secondary_data();
-                app_state_update_secondary_indices();
-                secondary_fetch_refresh_now();
-                app_state_request_refresh();
-                switch_to_screen(SCREEN_MAIN);
-                break;
-            }
-
-            case EVT_SERVER_DELETE: {
-                int old_idx = state->settings.active_server_index;
-                settings_delete_server(evt.data.server_index);
-                int new_idx = state->settings.active_server_index;
-                // Switch history if active server changed
-                if (old_idx != new_idx || evt.data.server_index == old_idx) {
-                    history_switch_server(-1, new_idx);  // -1 because deleted server data is gone
-                }
-                state->runtime.current_players = -1;
-                state->runtime.server_time[0] = '\0';
-                app_state_clear_secondary_data();
-                app_state_update_secondary_indices();
-                secondary_fetch_refresh_now();
-                app_state_request_refresh();
-                switch_to_screen(SCREEN_MAIN);
-                break;
-            }
-
-            case EVT_SERVER_NEXT:
-                if (state->settings.server_count > 1) {
-                    int old_idx = state->settings.active_server_index;
-                    int new_idx = (old_idx + 1) % state->settings.server_count;
-                    state->settings.active_server_index = new_idx;
-                    history_switch_server(old_idx, new_idx);
-                    state->runtime.current_players = -1;
-                    state->runtime.server_time[0] = '\0';
-                    app_state_clear_main_trend();
-                    app_state_clear_secondary_data();
-                    app_state_update_secondary_indices();
-                    secondary_fetch_refresh_now();
-                    app_state_request_refresh();
-                    settings_save();
-                    update_secondary_boxes();
-                }
-                break;
-
-            case EVT_SERVER_PREV:
-                if (state->settings.server_count > 1) {
-                    int old_idx = state->settings.active_server_index;
-                    int new_idx;
-                    if (old_idx == 0) {
-                        new_idx = state->settings.server_count - 1;
-                    } else {
-                        new_idx = old_idx - 1;
-                    }
-                    state->settings.active_server_index = new_idx;
-                    history_switch_server(old_idx, new_idx);
-                    state->runtime.current_players = -1;
-                    state->runtime.server_time[0] = '\0';
-                    app_state_clear_main_trend();
-                    app_state_clear_secondary_data();
-                    app_state_update_secondary_indices();
-                    secondary_fetch_refresh_now();
-                    app_state_request_refresh();
-                    settings_save();
-                    update_secondary_boxes();
-                }
-                break;
-
-            case EVT_REFRESH_DATA:
-                app_state_request_refresh();
-                break;
-
-            case EVT_SECONDARY_SERVER_CLICKED: {
-                // Swap clicked secondary server with main
-                int slot = evt.data.secondary.slot;
-                if (slot >= 0 && slot < state->runtime.secondary_count) {
-                    int old_active = state->settings.active_server_index;
-                    int new_active = state->runtime.secondary_server_indices[slot];
-
-                    ESP_LOGI(TAG, "Swapping server: slot %d, index %d -> %d",
-                             slot, old_active, new_active);
-
-                    // Save current main server data before switching
-                    secondary_server_status_t old_main_data = {
-                        .player_count = state->runtime.current_players,
-                        .max_players = state->runtime.max_players,
-                        .is_daytime = state->runtime.is_daytime,
-                        .valid = (state->runtime.current_players >= 0),
-                        .fetch_pending = false,
-                        .last_update_time = esp_timer_get_time() / 1000
-                    };
-                    strncpy(old_main_data.server_time, state->runtime.server_time,
-                            sizeof(old_main_data.server_time) - 1);
-                    strncpy(old_main_data.map_name, state->runtime.map_name,
-                            sizeof(old_main_data.map_name) - 1);
-                    memcpy(&old_main_data.trend, &state->runtime.main_trend, sizeof(trend_data_t));
-
-                    // Transfer secondary server data to main BEFORE switching
-                    secondary_server_status_t *sec = &state->runtime.secondary[slot];
-                    if (sec->valid) {
-                        state->runtime.current_players = sec->player_count;
-                        state->runtime.max_players = sec->max_players;
-                        strncpy(state->runtime.server_time, sec->server_time,
-                                sizeof(state->runtime.server_time) - 1);
-                        strncpy(state->runtime.map_name, sec->map_name,
-                                sizeof(state->runtime.map_name) - 1);
-                        state->runtime.is_daytime = sec->is_daytime;
-                        memcpy(&state->runtime.main_trend, &sec->trend, sizeof(trend_data_t));
-
-                        ESP_LOGI(TAG, "Transferred secondary->main: %d/%d players",
-                                 sec->player_count, sec->max_players);
-                    }
-
-                    // Switch active server
-                    state->settings.active_server_index = new_active;
-
-                    // Switch history
-                    history_switch_server(old_active, new_active);
-
-                    // Clear secondary data and recalculate indices
-                    app_state_clear_secondary_data();
-                    app_state_update_secondary_indices();
-
-                    // Find which slot the old main server is now in and restore its data
-                    for (int i = 0; i < state->runtime.secondary_count; i++) {
-                        if (state->runtime.secondary_server_indices[i] == old_active) {
-                            memcpy(&state->runtime.secondary[i], &old_main_data,
-                                   sizeof(secondary_server_status_t));
-                            ESP_LOGI(TAG, "Transferred main->secondary[%d]: %d/%d players",
-                                     i, old_main_data.player_count, old_main_data.max_players);
-                            break;
-                        }
-                    }
-
-                    // Trigger secondary fetch for other secondary servers
-                    secondary_fetch_refresh_now();
-
-                    settings_save();
-                    update_ui();
-                    update_secondary_boxes();
-                }
-                break;
-            }
-
-            case EVT_SECONDARY_DATA_UPDATED:
-                // Refresh secondary boxes display
-                update_secondary_boxes();
-                break;
-
-            default:
-                break;
-        }
-    }
 }
 
 // ============== MAIN ==============
@@ -1858,8 +1440,8 @@ void app_main(void) {
     // Get state reference
     app_state_t *state = app_state_get();
 
-    // Initialize screensaver activity time
-    state->ui.last_activity_time = esp_timer_get_time() / 1000;
+    // Initialize screensaver module
+    screensaver_init();
 
     // First boot handling
     if (state->settings.first_boot || strlen(state->settings.wifi_ssid) == 0) {
@@ -1924,9 +1506,9 @@ void app_main(void) {
     vTaskDelay(pdMS_TO_TICKS(500));
 
     // Initial UI update
-    update_ui();
-    update_sd_status();
-    update_secondary_boxes();
+    ui_update_main();
+    ui_update_sd_status();
+    ui_update_secondary();
 
     // Main loop
     while (1) {
@@ -1934,18 +1516,18 @@ void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(10));
 
         // Process any pending events
-        process_events();
+        event_handler_process();
 
         // Query server status (on main screen OR during screensaver for background data)
-        if (app_state_get_current_screen() == SCREEN_MAIN || state->ui.screensaver_active) {
-            query_server_status();
+        if (app_state_get_current_screen() == SCREEN_MAIN || screensaver_is_active()) {
+            server_query_execute();
             // Yield after HTTP request to let LVGL process
             vTaskDelay(pdMS_TO_TICKS(50));
             // Only update UI if not in screensaver mode
-            if (!state->ui.screensaver_active) {
-                update_ui();
-                update_secondary_boxes();  // Also update secondary servers display
-                update_sd_status();
+            if (!screensaver_is_active()) {
+                ui_update_main();
+                ui_update_secondary();  // Also update secondary servers display
+                ui_update_sd_status();
             }
         }
 
@@ -1953,7 +1535,7 @@ void app_main(void) {
         int wait_cycles = (state->settings.refresh_interval_sec * 1000) / 100;
         for (int i = 0; i < wait_cycles; i++) {
             // Process events during wait
-            process_events();
+            event_handler_process();
 
             // Check for manual refresh
             if (app_state_consume_refresh_request()) {
@@ -1964,95 +1546,8 @@ void app_main(void) {
             // Auto-hide alerts
             alert_check_auto_hide();
 
-            // Screensaver timeout check (uses mutex-protected helper)
-            if (!state->ui.screensaver_active && state->settings.screensaver_timeout_sec > 0) {
-                int64_t now = esp_timer_get_time() / 1000;
-                int64_t elapsed_ms = now - state->ui.last_activity_time;
-
-                // Debug: log elapsed time every 30 seconds
-                static int64_t last_elapsed_log = 0;
-                if (now - last_elapsed_log > 30000) {
-                    ESP_LOGI(TAG, "SS elapsed: %lld sec / %d sec timeout",
-                             elapsed_ms / 1000, state->settings.screensaver_timeout_sec);
-                    last_elapsed_log = now;
-                }
-
-                if (elapsed_ms > ((int64_t)state->settings.screensaver_timeout_sec * 1000)) {
-                    ESP_LOGI(TAG, "Screensaver timeout after %lld sec of inactivity", elapsed_ms / 1000);
-                    screensaver_set_active(true);
-                }
-            }
-
-            // Touch handling with debouncing - single source of truth for activity tracking
-            static bool wait_for_release = false;       // Wait for finger lift after long-press off
-            static int64_t touch_press_start = 0;       // When touch first detected (for debounce)
-            static bool touch_activity_counted = false; // Only count activity once per touch
-
-            lv_indev_t *touch_indev = display_get_touch_indev();
-            if (touch_indev) {
-                if (lvgl_port_lock(10)) {
-                    lv_indev_state_t touch_state = lv_indev_get_state(touch_indev);
-                    lvgl_port_unlock();
-
-                    int64_t now = esp_timer_get_time() / 1000;
-
-                    // Debug: log raw touch state every 5 seconds
-                    static int64_t last_touch_debug = 0;
-                    if (now - last_touch_debug > 5000) {
-                        ESP_LOGI(TAG, "Touch debug: raw=%s, ss_active=%d, timeout=%d",
-                                 touch_state == LV_INDEV_STATE_PRESSED ? "PRESSED" : "released",
-                                 state->ui.screensaver_active,
-                                 state->settings.screensaver_timeout_sec);
-                        last_touch_debug = now;
-                    }
-
-                    if (touch_state == LV_INDEV_STATE_PRESSED) {
-                        // Track when touch started (for debouncing)
-                        if (touch_press_start == 0) {
-                            touch_press_start = now;
-                            ESP_LOGW(TAG, "Touch PRESS detected (raw)");
-                        }
-
-                        // Debounce: require 50ms of continuous press to count as real touch
-                        int64_t press_duration = now - touch_press_start;
-                        bool is_real_touch = (press_duration >= 50);
-
-                        // Wake from screensaver on any real touch (but not if waiting for release)
-                        if (state->ui.screensaver_active && !wait_for_release && is_real_touch) {
-                            ESP_LOGI(TAG, "Touch wake from screensaver");
-                            screensaver_set_active(false);
-                            state->ui.long_press_tracking = false;
-                            touch_activity_counted = true;
-                        } else if (!state->ui.screensaver_active && is_real_touch) {
-                            // Reset activity timer ONCE per touch (not continuously)
-                            if (!touch_activity_counted) {
-                                state->ui.last_activity_time = now;
-                                touch_activity_counted = true;
-                            }
-
-                            // Track long-press for screen-off
-                            if (!state->ui.long_press_tracking) {
-                                state->ui.long_press_start_time = now;
-                                state->ui.long_press_tracking = true;
-                            } else {
-                                int64_t long_press_duration = now - state->ui.long_press_start_time;
-                                if (long_press_duration >= SCREEN_OFF_LONG_PRESS_MS) {
-                                    ESP_LOGI(TAG, "Long-press screen-off triggered");
-                                    screensaver_set_active(true);
-                                    state->ui.long_press_tracking = false;
-                                    wait_for_release = true;  // Don't wake until finger lifted
-                                }
-                            }
-                        }
-                    } else {
-                        // Finger released - reset all tracking
-                        state->ui.long_press_tracking = false;
-                        wait_for_release = false;
-                        touch_press_start = 0;
-                        touch_activity_counted = false;
-                    }
-                }
-            }
+            // Screensaver and touch handling
+            screensaver_tick();
 
             vTaskDelay(pdMS_TO_TICKS(100));
         }
