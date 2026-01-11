@@ -21,6 +21,7 @@ idf_component_register(
         "services/nvs_cache.c"
         "ui/ui_styles.c"
         "ui/ui_widgets.c"
+        "ui/ui_alerts.c"
         "ui/map_background.c"
         "ui/screen_history.c"
     INCLUDE_DIRS
