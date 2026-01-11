@@ -32,6 +32,7 @@
 #include "drivers/buzzer.h"
 #include "drivers/sd_card.h"
 #include "drivers/display.h"
+#include "drivers/io_expander.h"
 #include "services/wifi_manager.h"
 #include "services/battlemetrics.h"
 #include "services/settings_store.h"
@@ -256,18 +257,46 @@ static void on_history_clicked(lv_event_t *e) {
     events_post_screen_change(SCREEN_HISTORY);
 }
 
-// Global touch handler for screensaver wake and activity tracking
+/**
+ * Safely set screensaver state with mutex protection
+ * This ensures hardware and software state stay synchronized
+ * @param active true to turn screen off, false to turn on
+ * @return true if state changed successfully, false on failure
+ */
+static bool screensaver_set_active(bool active) {
+    if (app_state_lock(50)) {
+        app_state_t *state = app_state_get();
+        if (state->ui.screensaver_active != active) {
+            esp_err_t ret = display_set_backlight(!active);
+            if (ret == ESP_OK) {
+                state->ui.screensaver_active = active;
+                state->ui.last_activity_time = esp_timer_get_time() / 1000;
+                ESP_LOGI(TAG, "Screensaver %s", active ? "ON (screen off)" : "OFF (screen on)");
+                app_state_unlock();
+                return true;
+            } else {
+                ESP_LOGE(TAG, "Failed to change backlight, screensaver state unchanged");
+            }
+        }
+        app_state_unlock();
+    } else {
+        ESP_LOGW(TAG, "Could not lock state for screensaver change");
+    }
+    return false;
+}
+
+// Global touch handler for screensaver wake (LVGL events)
+// NOTE: Activity time is tracked in main loop polling for consistency
 static void on_screen_touch_pressed(lv_event_t *e) {
     (void)e;
     app_state_t *state = app_state_get();
 
-    // Update last activity time
-    state->ui.last_activity_time = esp_timer_get_time() / 1000;
+    ESP_LOGW(TAG, "LVGL touch event fired (ss_active=%d)", state->ui.screensaver_active);
 
-    // Wake from screensaver if active
+    // Wake from screensaver if active (use helper for safe state change)
     if (state->ui.screensaver_active) {
-        display_set_backlight(true);
-        state->ui.screensaver_active = false;
+        ESP_LOGI(TAG, "LVGL callback waking from screensaver");
+        screensaver_set_active(false);
         state->ui.long_press_tracking = false;  // Don't start long-press tracking when waking
     } else {
         // Start tracking for potential long-press screen-off
@@ -1495,23 +1524,33 @@ static void update_ui(void) {
         lv_label_set_text(lbl_update, buf);
     }
 
-    // Restart countdown
+    // Last restart time (show CET time)
     if (srv && lbl_restart) {
-        int countdown = restart_get_countdown(srv);
+        int time_since = restart_get_time_since_last(srv);
 
-        if (countdown >= 0) {
-            char countdown_buf[64];
+        if (time_since >= 0 && wifi_manager_is_time_synced()) {
+            char restart_buf[64];
             char time_str[16];
-            restart_format_countdown(countdown, time_str, sizeof(time_str));
-            const char *mode = srv->manual_restart_set ? "" : " (auto)";
-            snprintf(countdown_buf, sizeof(countdown_buf), "Restart: %s%s", time_str, mode);
-            lv_label_set_text(lbl_restart, countdown_buf);
-            lv_obj_set_style_text_color(lbl_restart, ui_get_restart_color(countdown), 0);
-        } else if (srv->restart_history.restart_count == 1) {
-            lv_label_set_text(lbl_restart, "Restart: 1 detected, learning...");
-            lv_obj_set_style_text_color(lbl_restart, COLOR_WARNING, 0);
-        } else if (!srv->manual_restart_set) {
-            lv_label_set_text(lbl_restart, "Restart: Set schedule in Settings");
+            char ago_str[32];
+            restart_format_last_time(srv, time_str, sizeof(time_str));
+            restart_format_time_since(time_since, ago_str, sizeof(ago_str));
+            snprintf(restart_buf, sizeof(restart_buf), "Restart: %s (%s)", time_str, ago_str);
+            lv_label_set_text(lbl_restart, restart_buf);
+            // Color based on recency: green if recent, fades to muted
+            if (time_since < 1800) {  // < 30 min
+                lv_obj_set_style_text_color(lbl_restart, COLOR_SUCCESS, 0);
+            } else if (time_since < 7200) {  // < 2 hours
+                lv_obj_set_style_text_color(lbl_restart, COLOR_WARNING, 0);
+            } else {
+                lv_obj_set_style_text_color(lbl_restart, COLOR_TEXT_MUTED, 0);
+            }
+        } else if (time_since >= 0) {
+            // Time not synced yet, just show the stored time
+            char restart_buf[64];
+            char time_str[16];
+            restart_format_last_time(srv, time_str, sizeof(time_str));
+            snprintf(restart_buf, sizeof(restart_buf), "Restart: %s", time_str);
+            lv_label_set_text(lbl_restart, restart_buf);
             lv_obj_set_style_text_color(lbl_restart, COLOR_TEXT_MUTED, 0);
         } else {
             lv_label_set_text(lbl_restart, "");
@@ -1790,6 +1829,10 @@ void app_main(void) {
         return;
     }
 
+    // TEST: Verify backlight control works - watch for screen flicker!
+    ESP_LOGW(TAG, "Running backlight test - watch for screen flicker over next 4 seconds...");
+    io_expander_test_backlight();
+
     // Initialize UI styles
     ui_styles_init();
 
@@ -1860,6 +1903,12 @@ void app_main(void) {
                 history_load_json_for_server(state->settings.active_server_index);
                 ESP_LOGI(TAG, "History reloaded: %d entries", history_get_count());
             }
+
+            // Check if restart data is stale and reset if needed
+            server_config_t *srv = app_state_get_active_server();
+            if (srv) {
+                restart_check_stale_and_reset(srv);
+            }
         } else {
             ESP_LOGW(TAG, "Time sync timeout, timestamps may be wrong");
         }
@@ -1915,20 +1964,30 @@ void app_main(void) {
             // Auto-hide alerts
             alert_check_auto_hide();
 
-            // Screensaver timeout check
+            // Screensaver timeout check (uses mutex-protected helper)
             if (!state->ui.screensaver_active && state->settings.screensaver_timeout_sec > 0) {
                 int64_t now = esp_timer_get_time() / 1000;
                 int64_t elapsed_ms = now - state->ui.last_activity_time;
+
+                // Debug: log elapsed time every 30 seconds
+                static int64_t last_elapsed_log = 0;
+                if (now - last_elapsed_log > 30000) {
+                    ESP_LOGI(TAG, "SS elapsed: %lld sec / %d sec timeout",
+                             elapsed_ms / 1000, state->settings.screensaver_timeout_sec);
+                    last_elapsed_log = now;
+                }
+
                 if (elapsed_ms > ((int64_t)state->settings.screensaver_timeout_sec * 1000)) {
-                    ESP_LOGI(TAG, "Screensaver activated after %lld sec of inactivity",
-                             elapsed_ms / 1000);
-                    display_set_backlight(false);
-                    state->ui.screensaver_active = true;
+                    ESP_LOGI(TAG, "Screensaver timeout after %lld sec of inactivity", elapsed_ms / 1000);
+                    screensaver_set_active(true);
                 }
             }
 
-            // Touch handling - wake from screensaver OR long-press to turn off
-            static bool wait_for_release = false;  // Wait for finger lift after long-press off
+            // Touch handling with debouncing - single source of truth for activity tracking
+            static bool wait_for_release = false;       // Wait for finger lift after long-press off
+            static int64_t touch_press_start = 0;       // When touch first detected (for debounce)
+            static bool touch_activity_counted = false; // Only count activity once per touch
+
             lv_indev_t *touch_indev = display_get_touch_indev();
             if (touch_indev) {
                 if (lvgl_port_lock(10)) {
@@ -1937,34 +1996,60 @@ void app_main(void) {
 
                     int64_t now = esp_timer_get_time() / 1000;
 
+                    // Debug: log raw touch state every 5 seconds
+                    static int64_t last_touch_debug = 0;
+                    if (now - last_touch_debug > 5000) {
+                        ESP_LOGI(TAG, "Touch debug: raw=%s, ss_active=%d, timeout=%d",
+                                 touch_state == LV_INDEV_STATE_PRESSED ? "PRESSED" : "released",
+                                 state->ui.screensaver_active,
+                                 state->settings.screensaver_timeout_sec);
+                        last_touch_debug = now;
+                    }
+
                     if (touch_state == LV_INDEV_STATE_PRESSED) {
-                        // Wake from screensaver on any touch (but not if waiting for release)
-                        if (state->ui.screensaver_active && !wait_for_release) {
+                        // Track when touch started (for debouncing)
+                        if (touch_press_start == 0) {
+                            touch_press_start = now;
+                            ESP_LOGW(TAG, "Touch PRESS detected (raw)");
+                        }
+
+                        // Debounce: require 50ms of continuous press to count as real touch
+                        int64_t press_duration = now - touch_press_start;
+                        bool is_real_touch = (press_duration >= 50);
+
+                        // Wake from screensaver on any real touch (but not if waiting for release)
+                        if (state->ui.screensaver_active && !wait_for_release && is_real_touch) {
                             ESP_LOGI(TAG, "Touch wake from screensaver");
-                            display_set_backlight(true);
-                            state->ui.screensaver_active = false;
-                            state->ui.last_activity_time = now;
+                            screensaver_set_active(false);
                             state->ui.long_press_tracking = false;
-                        } else if (!state->ui.screensaver_active) {
-                            // Track long-press for screen-off and reset activity
-                            state->ui.last_activity_time = now;
+                            touch_activity_counted = true;
+                        } else if (!state->ui.screensaver_active && is_real_touch) {
+                            // Reset activity timer ONCE per touch (not continuously)
+                            if (!touch_activity_counted) {
+                                state->ui.last_activity_time = now;
+                                touch_activity_counted = true;
+                            }
+
+                            // Track long-press for screen-off
                             if (!state->ui.long_press_tracking) {
                                 state->ui.long_press_start_time = now;
                                 state->ui.long_press_tracking = true;
                             } else {
-                                int64_t press_duration = now - state->ui.long_press_start_time;
-                                if (press_duration >= SCREEN_OFF_LONG_PRESS_MS) {
+                                int64_t long_press_duration = now - state->ui.long_press_start_time;
+                                if (long_press_duration >= SCREEN_OFF_LONG_PRESS_MS) {
                                     ESP_LOGI(TAG, "Long-press screen-off triggered");
-                                    display_set_backlight(false);
-                                    state->ui.screensaver_active = true;
+                                    screensaver_set_active(true);
                                     state->ui.long_press_tracking = false;
                                     wait_for_release = true;  // Don't wake until finger lifted
                                 }
                             }
                         }
                     } else {
+                        // Finger released - reset all tracking
                         state->ui.long_press_tracking = false;
-                        wait_for_release = false;  // Finger lifted, allow wake on next touch
+                        wait_for_release = false;
+                        touch_press_start = 0;
+                        touch_activity_counted = false;
                     }
                 }
             }

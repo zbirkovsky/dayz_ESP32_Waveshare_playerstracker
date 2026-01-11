@@ -39,4 +39,34 @@ int restart_get_countdown(server_config_t *srv);
  */
 void restart_format_countdown(int seconds, char *buf, size_t buf_size);
 
+/**
+ * Get time since last detected restart
+ * @param srv Server configuration
+ * @return Seconds since last restart, -1 if no restart recorded
+ */
+int restart_get_time_since_last(server_config_t *srv);
+
+/**
+ * Format time since last restart into human-readable string
+ * @param seconds Seconds since restart (negative = unknown)
+ * @param buf Output buffer
+ * @param buf_size Buffer size
+ */
+void restart_format_time_since(int seconds, char *buf, size_t buf_size);
+
+/**
+ * Format last restart as CET time (HH:MM)
+ * @param srv Server configuration
+ * @param buf Output buffer
+ * @param buf_size Buffer size
+ */
+void restart_format_last_time(server_config_t *srv, char *buf, size_t buf_size);
+
+/**
+ * Reset restart tracking if data is stale (>12 hours old)
+ * Call this after NTP sync to bootstrap fresh data
+ * @param srv Server configuration
+ */
+void restart_check_stale_and_reset(server_config_t *srv);
+
 #endif // RESTART_MANAGER_H
