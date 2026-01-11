@@ -34,10 +34,23 @@ void io_expander_set_sd_cs(bool active);
 esp_err_t io_expander_reset_gt911(void);
 
 /**
- * Control LCD backlight via EXIO0
+ * Control LCD backlight via EXIO0 with retry logic
  * @param on true = backlight on, false = backlight off
+ * @return ESP_OK on success, error code on failure after retries
  */
-void io_expander_set_backlight(bool on);
+esp_err_t io_expander_set_backlight(bool on);
+
+/**
+ * Get current backlight state
+ * @return true if backlight is on, false if off
+ */
+bool io_expander_get_backlight_state(void);
+
+/**
+ * Test backlight control by toggling EXIO0
+ * Call this at startup to verify backlight can be controlled
+ */
+void io_expander_test_backlight(void);
 
 /**
  * Control USB/CAN mode select via EXIO5

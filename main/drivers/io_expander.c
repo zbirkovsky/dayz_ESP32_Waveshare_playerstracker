@@ -43,7 +43,8 @@ static esp_err_t write_state(uint8_t state) {
                                       &state, 1, pdMS_TO_TICKS(100));
     if (ret == ESP_OK) {
         g_ch422g_state = state;
-        ESP_LOGD(TAG, "CH422G state = 0x%02X", state);
+        ESP_LOGI(TAG, "CH422G write OK: addr=0x%02X state=0x%02X (EXIO0=%d)",
+                 CH422G_OUTPUT_ADDR, state, (state & 0x01) ? 1 : 0);
     } else {
         ESP_LOGE(TAG, "CH422G output write failed: %s", esp_err_to_name(ret));
     }
@@ -151,27 +152,73 @@ esp_err_t io_expander_reset_gt911(void) {
     return ESP_OK;
 }
 
-void io_expander_set_backlight(bool on) {
+esp_err_t io_expander_set_backlight(bool on) {
     if (!g_initialized) {
         ESP_LOGW(TAG, "Not initialized, cannot set backlight");
-        return;
+        return ESP_ERR_INVALID_STATE;
     }
 
     if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to take mutex for backlight");
-        return;
+        return ESP_ERR_TIMEOUT;
     }
 
+    uint8_t old_state = g_ch422g_state;
     if (on) {
         g_ch422g_state |= CH422G_EXIO0_BIT;
     } else {
         g_ch422g_state &= ~CH422G_EXIO0_BIT;
     }
-    write_state(g_ch422g_state);
+
+    ESP_LOGI(TAG, "Backlight %s: 0x%02X -> 0x%02X", on ? "ON" : "OFF", old_state, g_ch422g_state);
+    esp_err_t ret = write_state(g_ch422g_state);
+
+    if (ret != ESP_OK) {
+        // Revert in-memory state on failure
+        g_ch422g_state = old_state;
+        ESP_LOGE(TAG, "Backlight I2C write failed: %s", esp_err_to_name(ret));
+    }
 
     xSemaphoreGive(g_mutex);
+    return ret;
+}
 
-    ESP_LOGI(TAG, "Backlight = %s", on ? "ON" : "OFF");
+void io_expander_test_backlight(void) {
+    ESP_LOGW(TAG, "=== BACKLIGHT TEST START ===");
+    ESP_LOGW(TAG, "Testing EXIO0 bit toggle - watch for screen flicker!");
+
+    // Test 1: Try setting bit LOW (might be active-low)
+    ESP_LOGW(TAG, "Test 1: Setting EXIO0=0 (state will be 0xFE if starting from 0xFF)");
+    io_expander_set_backlight(false);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    // Test 2: Set bit HIGH
+    ESP_LOGW(TAG, "Test 2: Setting EXIO0=1 (state will be 0xFF)");
+    io_expander_set_backlight(true);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    // Test 3: Try writing directly to different addresses to find backlight
+    ESP_LOGW(TAG, "Test 3: Direct write 0x00 to output register");
+    if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        uint8_t test_state = 0x00;  // All bits low
+        write_state(test_state);
+        xSemaphoreGive(g_mutex);
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    // Restore to all high
+    ESP_LOGW(TAG, "Test 4: Restore to 0xFF");
+    if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        g_ch422g_state = 0xFF;
+        write_state(g_ch422g_state);
+        xSemaphoreGive(g_mutex);
+    }
+
+    ESP_LOGW(TAG, "=== BACKLIGHT TEST END ===");
+}
+
+bool io_expander_get_backlight_state(void) {
+    return (g_ch422g_state & CH422G_EXIO0_BIT) != 0;
 }
 
 void io_expander_set_usb_mode(bool usb_mode) {

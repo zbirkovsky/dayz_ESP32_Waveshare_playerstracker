@@ -256,6 +256,6 @@ esp_lcd_panel_handle_t display_get_panel(void) {
     return panel_handle;
 }
 
-void display_set_backlight(bool on) {
-    io_expander_set_backlight(on);
+esp_err_t display_set_backlight(bool on) {
+    return io_expander_set_backlight(on);
 }

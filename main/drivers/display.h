@@ -48,9 +48,10 @@ lv_indev_t* display_get_touch_indev(void);
 esp_lcd_panel_handle_t display_get_panel(void);
 
 /**
- * Control the LCD backlight via CH422G EXIO2
+ * Control the LCD backlight via CH422G EXIO0
  * @param on true = backlight on, false = backlight off
+ * @return ESP_OK on success, error code on failure
  */
-void display_set_backlight(bool on);
+esp_err_t display_set_backlight(bool on);
 
 #endif // DISPLAY_H
