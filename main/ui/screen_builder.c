@@ -787,17 +787,35 @@ void screen_builder_create_history(void) {
     lv_obj_set_style_text_color(lbl_history_legend, COLOR_TEXT_MUTED, 0);
     lv_obj_align(lbl_history_legend, LV_ALIGN_BOTTOM_MID, 0, -5);
 
-    static history_screen_widgets_t history_widgets;
-    history_widgets.screen = screen_history;
-    history_widgets.chart = chart_history;
-    history_widgets.series = chart_series;
-    history_widgets.lbl_legend = lbl_history_legend;
+    // Initialize history widgets struct
+    // Temporarily undefine conflicting macros
+    #undef screen_history
+    #undef chart_history
+    #undef chart_series
+    #undef lbl_history_legend
+    #undef lbl_y_axis
+    #undef lbl_x_axis
+
+    static history_screen_widgets_t hist_widgets;
+    ui_context_t *ctx = ui_context_get();
+    hist_widgets.screen = ctx->screen_history;
+    hist_widgets.chart = ctx->chart_history;
+    hist_widgets.series = ctx->chart_series;
+    hist_widgets.lbl_legend = ctx->lbl_history_legend;
     for (int i = 0; i < 5; i++) {
-        history_widgets.lbl_y_axis[i] = lbl_y_axis[i];
-        history_widgets.lbl_x_axis[i] = lbl_x_axis[i];
+        hist_widgets.lbl_y_axis[i] = ctx->lbl_y_axis[i];
+        hist_widgets.lbl_x_axis[i] = ctx->lbl_x_axis[i];
     }
-    screen_history_init(&history_widgets);
+    screen_history_init(&hist_widgets);
     screen_history_refresh();
+
+    // Restore macros
+    #define screen_history      (UI_CTX->screen_history)
+    #define chart_history       (UI_CTX->chart_history)
+    #define chart_series        (UI_CTX->chart_series)
+    #define lbl_history_legend  (UI_CTX->lbl_history_legend)
+    #define lbl_y_axis          (UI_CTX->lbl_y_axis)
+    #define lbl_x_axis          (UI_CTX->lbl_x_axis)
 }
 
 void screen_builder_create_secondary_boxes(void) {

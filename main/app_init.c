@@ -5,6 +5,7 @@
 
 #include "app_init.h"
 #include <string.h>
+#include <time.h>
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "config.h"

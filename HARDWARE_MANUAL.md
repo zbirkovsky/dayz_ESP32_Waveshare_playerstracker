@@ -270,6 +270,80 @@ idf.py -p COM6 monitor
 
 ---
 
+## Software Architecture Notes
+
+### Main Loop & Auto-Refresh
+
+The main loop queries the server and updates the UI. **Critical:** Do NOT add screensaver checks that block UI updates after a successful query.
+
+```c
+// CORRECT - Always update UI when on main screen
+if (app_state_get_current_screen() == SCREEN_MAIN) {
+    server_query_execute();
+    vTaskDelay(pdMS_TO_TICKS(50));
+    ui_update_main();
+    ui_update_secondary();
+    ui_update_sd_status();
+}
+
+// WRONG - Screensaver check blocks UI updates
+if (app_state_get_current_screen() == SCREEN_MAIN || screensaver_is_active()) {
+    server_query_execute();
+    if (!screensaver_is_active()) {  // <-- BUG: blocks update when screensaver active
+        ui_update_main();
+    }
+}
+```
+
+**Why this matters:** If refresh interval is long (e.g., 120 seconds) and screensaver timeout is shorter, the screensaver activates during wait. Query runs but UI update is skipped, leaving stale data on display.
+
+---
+
+## Known Build Issues & Fixes
+
+### 1. Macro Conflicts in screen_builder.c
+
+The UI uses macros like `#define lbl_y_axis (UI_CTX->lbl_y_axis)` for convenience. These conflict with struct member names in `history_screen_widgets_t`.
+
+**Problem:**
+```c
+history_widgets.lbl_y_axis[i] = lbl_y_axis[i];  // Expands to invalid syntax
+```
+
+**Solution:** Use `#undef` before and `#define` after the problematic block:
+```c
+#undef lbl_y_axis
+#undef lbl_x_axis
+// ... struct initialization code ...
+#define lbl_y_axis (UI_CTX->lbl_y_axis)
+#define lbl_x_axis (UI_CTX->lbl_x_axis)
+```
+
+### 2. Missing time.h in app_init.c
+
+If using `time_t` or `time()` functions, ensure `#include <time.h>` is present.
+
+### 3. Build Cache Corruption
+
+If build fails with CMake errors about mismatched source directories:
+```
+CMake Error: The source "..." does not match the source "..." used to generate cache.
+```
+
+**Solution:** Delete the build directory completely:
+```bash
+rm -rf build
+idf.py build
+```
+
+### 4. ESP-IDF Path Mismatch
+
+Build scripts hardcode ESP-IDF paths. If switching ESP-IDF versions or machines, update paths in:
+- `do_build.ps1`
+- `do_flash.ps1`
+
+---
+
 ## References
 
 - [ESP-IDF RGB LCD Documentation](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/lcd/rgb_lcd.html)

@@ -109,17 +109,13 @@ void app_main(void) {
         // Process any pending events
         event_handler_process();
 
-        // Query server status (on main screen OR during screensaver for background data)
-        if (app_state_get_current_screen() == SCREEN_MAIN || screensaver_is_active()) {
+        // Query server status and update UI when on main screen
+        if (app_state_get_current_screen() == SCREEN_MAIN) {
             server_query_execute();
-            // Yield after HTTP request to let LVGL process
             vTaskDelay(pdMS_TO_TICKS(50));
-            // Only update UI if not in screensaver mode
-            if (!screensaver_is_active()) {
-                ui_update_main();
-                ui_update_secondary();  // Also update secondary servers display
-                ui_update_sd_status();
-            }
+            ui_update_main();
+            ui_update_secondary();
+            ui_update_sd_status();
         }
 
         // Wait for refresh interval
