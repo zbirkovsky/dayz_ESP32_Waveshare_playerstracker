@@ -143,7 +143,7 @@
 #define DEFAULT_ALERT_THRESHOLD         50
 #define MIN_REFRESH_INTERVAL_SEC        10
 #define MAX_REFRESH_INTERVAL_SEC        300
-#define DEFAULT_SCREENSAVER_TIMEOUT_SEC 300     // 5 minutes (0 = disabled)
+#define DEFAULT_SCREENSAVER_TIMEOUT_SEC 15      // 15 seconds for testing (change to 300 for production)
 
 // Default server for first boot
 #define DEFAULT_SERVER_ID       "29986583"

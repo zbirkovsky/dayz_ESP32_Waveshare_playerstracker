@@ -22,6 +22,8 @@ typedef struct {
     lv_obj_t *screen_server;
     lv_obj_t *screen_add_server;
     lv_obj_t *screen_history;
+    lv_obj_t *screen_heatmap;
+    lv_obj_t *screen_screensaver;
 
     // Main screen widgets
     lv_obj_t *main_card;
@@ -40,8 +42,7 @@ typedef struct {
     lv_obj_t *lbl_main_trend;
     lv_obj_t *lbl_rank;
     lv_obj_t *lbl_sd_status;
-    lv_obj_t *btn_prev_server;
-    lv_obj_t *btn_next_server;
+    lv_obj_t *lbl_cet_time;
 
     // Settings widgets
     lv_obj_t *kb;           // Keyboard for WiFi settings

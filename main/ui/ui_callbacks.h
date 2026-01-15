@@ -13,6 +13,7 @@ void cb_refresh_clicked(lv_event_t *e);
 void cb_card_clicked(lv_event_t *e);
 void cb_settings_clicked(lv_event_t *e);
 void cb_history_clicked(lv_event_t *e);
+void cb_heatmap_clicked(lv_event_t *e);
 void cb_back_clicked(lv_event_t *e);
 void cb_wifi_settings_clicked(lv_event_t *e);
 void cb_server_settings_clicked(lv_event_t *e);

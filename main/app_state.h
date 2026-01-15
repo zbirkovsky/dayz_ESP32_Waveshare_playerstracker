@@ -97,7 +97,9 @@ typedef enum {
     SCREEN_SERVER_SETTINGS,
     SCREEN_ADD_SERVER,
     SCREEN_HISTORY,
-    SCREEN_ALERTS
+    SCREEN_HEATMAP,
+    SCREEN_ALERTS,
+    SCREEN_SCREENSAVER
 } screen_id_t;
 
 // History time range selection

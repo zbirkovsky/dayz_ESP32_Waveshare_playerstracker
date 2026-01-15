@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 #include "esp_lvgl_port.h"
 
 #include "ui_update.h"
@@ -47,8 +48,8 @@
 #define lbl_main_trend      (UI_CTX->lbl_main_trend)
 #define lbl_rank            (UI_CTX->lbl_rank)
 #define lbl_sd_status       (UI_CTX->lbl_sd_status)
-#define btn_prev_server     (UI_CTX->btn_prev_server)
-#define btn_next_server     (UI_CTX->btn_next_server)
+#define lbl_cet_time        (UI_CTX->lbl_cet_time)
+#define screen_heatmap      (UI_CTX->screen_heatmap)
 
 // Settings widgets
 #define kb                      (UI_CTX->kb)
@@ -200,6 +201,10 @@ void ui_switch_screen(screen_id_t screen) {
             lbl_x_axis[i] = NULL;
         }
     }
+    if (screen != SCREEN_HEATMAP && screen_heatmap) {
+        lv_obj_delete(screen_heatmap);
+        screen_heatmap = NULL;
+    }
 
     app_state_set_current_screen(screen);
 
@@ -228,6 +233,12 @@ void ui_switch_screen(screen_id_t screen) {
         case SCREEN_HISTORY:
             screen_builder_create_history();
             lv_screen_load(screen_history);
+            break;
+        case SCREEN_HEATMAP:
+            screen_builder_create_heatmap();
+            lv_screen_load(screen_heatmap);
+            // Defer heavy heatmap calculation to avoid watchdog timeout
+            // Will be refreshed on next timer tick or can be triggered manually
             break;
         default:
             break;
@@ -401,13 +412,17 @@ void ui_update_main(void) {
         }
     }
 
-    // Server navigation visibility
-    if (state->settings.server_count <= 1) {
-        lv_obj_add_flag(btn_prev_server, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(btn_next_server, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_clear_flag(btn_prev_server, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(btn_next_server, LV_OBJ_FLAG_HIDDEN);
+    // CET time display
+    if (lbl_cet_time && wifi_manager_is_time_synced()) {
+        time_t now;
+        time(&now);
+        struct tm tm_buf;
+        localtime_r(&now, &tm_buf);
+        char time_buf[16];
+        snprintf(time_buf, sizeof(time_buf), "%02d:%02d CET", tm_buf.tm_hour, tm_buf.tm_min);
+        lv_label_set_text(lbl_cet_time, time_buf);
+    } else if (lbl_cet_time) {
+        lv_label_set_text(lbl_cet_time, "--:-- CET");
     }
 
     lvgl_port_unlock();

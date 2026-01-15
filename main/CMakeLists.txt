@@ -29,6 +29,8 @@ idf_component_register(
         "ui/screen_builder.c"
         "ui/map_background.c"
         "ui/screen_history.c"
+        "ui/screen_heatmap.c"
+        "ui/screen_screensaver.c"
         "ui/ui_update.c"
         "power/screensaver.c"
         "events/event_handler.c"

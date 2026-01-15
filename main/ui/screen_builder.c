@@ -19,6 +19,7 @@
 #include "ui/ui_widgets.h"
 #include "ui/ui_callbacks.h"
 #include "ui/screen_history.h"
+#include "ui/screen_heatmap.h"
 #include "power/screensaver.h"
 #include "services/wifi_manager.h"
 #include "services/settings_store.h"
@@ -34,6 +35,7 @@ static const char *TAG = "screen_builder";
 #define screen_server       (UI_CTX->screen_server)
 #define screen_add_server   (UI_CTX->screen_add_server)
 #define screen_history      (UI_CTX->screen_history)
+#define screen_heatmap      (UI_CTX->screen_heatmap)
 
 #define main_card           (UI_CTX->main_card)
 #define lbl_wifi_icon       (UI_CTX->lbl_wifi_icon)
@@ -51,8 +53,7 @@ static const char *TAG = "screen_builder";
 #define lbl_main_trend      (UI_CTX->lbl_main_trend)
 #define lbl_rank            (UI_CTX->lbl_rank)
 #define lbl_sd_status       (UI_CTX->lbl_sd_status)
-#define btn_prev_server     (UI_CTX->btn_prev_server)
-#define btn_next_server     (UI_CTX->btn_next_server)
+#define lbl_cet_time        (UI_CTX->lbl_cet_time)
 
 #define kb                      (UI_CTX->kb)
 #define kb_add                  (UI_CTX->kb_add)
@@ -247,6 +248,20 @@ void screen_builder_create_main(void) {
     ui_create_icon_button(screen_main, LV_SYMBOL_SETTINGS, 20, 10, cb_settings_clicked);
     ui_create_icon_button(screen_main, LV_SYMBOL_IMAGE, 80, 10, cb_history_clicked);
 
+    // Heatmap button (peak hours) - using bars symbol for grid-like appearance
+    lv_obj_t *btn_heatmap = lv_btn_create(screen_main);
+    lv_obj_set_size(btn_heatmap, 50, 50);
+    lv_obj_set_pos(btn_heatmap, 200, 10);
+    lv_obj_set_style_bg_opa(btn_heatmap, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_shadow_width(btn_heatmap, 0, 0);
+    lv_obj_set_style_border_width(btn_heatmap, 0, 0);
+    lv_obj_add_event_cb(btn_heatmap, cb_heatmap_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_heatmap = lv_label_create(btn_heatmap);
+    lv_label_set_text(lbl_heatmap, LV_SYMBOL_LIST);  // Grid-like icon
+    lv_obj_set_style_text_font(lbl_heatmap, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(lbl_heatmap, COLOR_INFO, 0);
+    lv_obj_center(lbl_heatmap);
+
     lv_obj_t *wifi_btn = lv_btn_create(screen_main);
     lv_obj_set_size(wifi_btn, 50, 50);
     lv_obj_align(wifi_btn, LV_ALIGN_TOP_LEFT, 140, 10);
@@ -261,8 +276,12 @@ void screen_builder_create_main(void) {
     lv_obj_set_style_text_color(lbl_wifi_icon, COLOR_TEXT_MUTED, 0);
     lv_obj_center(lbl_wifi_icon);
 
-    btn_prev_server = ui_create_icon_button(screen_main, LV_SYMBOL_LEFT, LCD_WIDTH/2 - 125, 10, cb_prev_server_clicked);
-    btn_next_server = ui_create_icon_button(screen_main, LV_SYMBOL_RIGHT, LCD_WIDTH/2 + 75, 10, cb_next_server_clicked);
+    // CET time display in the center of the top bar
+    lbl_cet_time = lv_label_create(screen_main);
+    lv_label_set_text(lbl_cet_time, "--:--");
+    lv_obj_set_style_text_font(lbl_cet_time, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(lbl_cet_time, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_align(lbl_cet_time, LV_ALIGN_TOP_MID, 0, 20);
 
     lbl_sd_status = lv_label_create(screen_main);
     lv_label_set_text(lbl_sd_status, "SD: --");
@@ -816,6 +835,21 @@ void screen_builder_create_history(void) {
     #define lbl_history_legend  (UI_CTX->lbl_history_legend)
     #define lbl_y_axis          (UI_CTX->lbl_y_axis)
     #define lbl_x_axis          (UI_CTX->lbl_x_axis)
+}
+
+void screen_builder_create_heatmap(void) {
+    screen_heatmap = ui_create_screen();
+    lv_obj_add_event_cb(screen_heatmap, screensaver_get_touch_pressed_cb(), LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen_heatmap, screensaver_get_touch_released_cb(), LV_EVENT_RELEASED, NULL);
+    ui_create_back_button(screen_heatmap, cb_back_clicked);
+    ui_create_title(screen_heatmap, "Peak Hours");
+
+    // Initialize heatmap widgets (42 cells - 7 days x 6 periods)
+    static heatmap_screen_widgets_t heatmap_widgets;
+    memset(&heatmap_widgets, 0, sizeof(heatmap_widgets));
+    heatmap_widgets.screen = screen_heatmap;
+    screen_heatmap_init(&heatmap_widgets);
+    screen_heatmap_refresh();
 }
 
 void screen_builder_create_secondary_boxes(void) {

@@ -30,6 +30,11 @@ void cb_history_clicked(lv_event_t *e) {
     events_post_screen_change(SCREEN_HISTORY);
 }
 
+void cb_heatmap_clicked(lv_event_t *e) {
+    (void)e;
+    events_post_screen_change(SCREEN_HEATMAP);
+}
+
 void cb_back_clicked(lv_event_t *e) {
     (void)e;
     events_post_screen_change(SCREEN_MAIN);

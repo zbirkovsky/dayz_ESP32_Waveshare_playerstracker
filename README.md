@@ -34,6 +34,13 @@ Real-time player count monitor for DayZ servers using an ESP32-S3 with a 7" touc
   - 1 hour / 8 hours / 24 hours / 1 week
 - Touch-selectable time range buttons
 
+### Peak Hours Heatmap
+- **7-day × 6-period heatmap** showing average player activity
+- Time periods: 00-04, 04-08, 08-12, 12-16, 16-20, 20-24
+- Color-coded cells (green→yellow→orange→red)
+- Tap any cell to see exact average and sample count
+- Based on 28 days of historical data
+
 ### Data Storage (SD Card)
 - **JSON Lines format** for human-readable history files
 - Daily history files: `/sdcard/history/server_X/YYYY-MM-DD.jsonl`
@@ -82,7 +89,7 @@ Real-time player count monitor for DayZ servers using an ESP32-S3 with a 7" touc
 
 ```
 +--------------------------------------------------+
-| [Settings] [History]  < Server (1/4) >  SD:2% [↻]|
+| [⚙] [📊] [🔥] [📶]    14:32 CET      SD:2%  [↻] |
 +--------------------------------------------------+
 |                                                  |
 |   ┌──────────────────────────────────────────┐   |
@@ -226,6 +233,17 @@ Managed automatically via ESP-IDF component manager:
 Uses the [BattleMetrics API](https://www.battlemetrics.com/developers/documentation) to fetch server status. No API key required for basic queries.
 
 ## Changelog
+
+### v2.5.0 - Peak Hours Heatmap & UI Improvements
+- **NEW: Peak Hours Heatmap** - Visual analytics showing when your server is busiest
+  - 7 days × 6 time periods (4-hour blocks)
+  - Color-coded cells showing average player counts
+  - Tap cells to see detailed statistics
+  - Analyzes 28 days of historical data
+- **CET Time Display** - Current time shown in top bar (replaces server navigation arrows)
+- **Simplified Navigation** - Removed left/right server arrows (use settings to switch servers)
+- **Screensaver Improvements** - Removed deep sleep (data now refreshes in background)
+- **Code Architecture** - Added screen_heatmap module with optimized 42-cell grid
 
 ### v2.4.0 - History Graph Fixes & WiFi Diagnostics
 - **CRITICAL FIX**: History graphs now display correct data for all time ranges

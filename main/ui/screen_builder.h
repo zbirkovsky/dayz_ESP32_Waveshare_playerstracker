@@ -37,6 +37,11 @@ void screen_builder_create_add_server(void);
 void screen_builder_create_history(void);
 
 /**
+ * Create the peak hours heatmap screen
+ */
+void screen_builder_create_heatmap(void);
+
+/**
  * Create secondary server watch boxes on main screen
  */
 void screen_builder_create_secondary_boxes(void);
