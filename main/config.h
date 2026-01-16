@@ -8,7 +8,7 @@
 
 // ============== APPLICATION CONSTANTS ==============
 #define APP_NAME            "DayZ Server Monitor"
-#define APP_VERSION         "2.2.0"
+#define APP_VERSION         "2.6.0"
 
 #define MAX_SERVERS         5
 #define MAX_HISTORY_ENTRIES 10080   // 7 days at 1 min intervals

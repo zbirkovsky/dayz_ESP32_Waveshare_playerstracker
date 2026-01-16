@@ -89,6 +89,7 @@ bool screensaver_set_active(bool active) {
                     }
 #endif
                     ESP_LOGI(TAG, "Screensaver ON (dim display)");
+                    lvgl_port_unlock();
                 } else {
 #ifdef CONFIG_PM_ENABLE
                     // Acquire PM lock to keep CPU at max frequency
@@ -103,14 +104,37 @@ bool screensaver_set_active(bool active) {
                         app_state_set_current_screen(SCREEN_MAIN);
 
                         // Force full screen refresh to prevent display artifacts
-                        // Direct mode can cause left-side glitches without explicit invalidation
+                        // Direct mode with bounce buffers can leave left-side artifacts
+                        // because RGB panels render left-to-right in 10-line chunks.
+                        // Solution: Multiple refresh cycles to ensure all bounces complete.
+
+                        // First refresh: process the screen load
                         lv_obj_invalidate(ui->screen_main);
                         lv_refr_now(NULL);
+                        lvgl_port_unlock();
+
+                        // Wait for bounce buffer transfers to complete
+                        vTaskDelay(pdMS_TO_TICKS(30));
+
+                        // Second refresh cycle: catch any missed areas
+                        if (lvgl_port_lock(100)) {
+                            lv_obj_invalidate(ui->screen_main);
+                            lv_refr_now(NULL);
+                            lvgl_port_unlock();
+                        }
+
+                        // Third refresh: ensure clean state
+                        vTaskDelay(pdMS_TO_TICKS(30));
+                        if (lvgl_port_lock(100)) {
+                            lv_obj_invalidate(ui->screen_main);
+                            lv_refr_now(NULL);
+                            lvgl_port_unlock();
+                        }
+                    } else {
+                        lvgl_port_unlock();
                     }
                     ESP_LOGI(TAG, "Screensaver OFF (returning to main)");
                 }
-
-                lvgl_port_unlock();
 
                 state->ui.screensaver_active = active;
                 state->ui.last_activity_time = esp_timer_get_time() / 1000;

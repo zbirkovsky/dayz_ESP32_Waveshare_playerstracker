@@ -109,10 +109,13 @@ void app_main(void) {
         // Process any pending events
         event_handler_process();
 
-        // Query server status and update UI when on main screen
+        // Always query server status for continuous data collection
+        // This ensures history/trends are recorded even during screensaver
+        server_query_execute();
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        // Only update UI when on main screen
         if (app_state_get_current_screen() == SCREEN_MAIN) {
-            server_query_execute();
-            vTaskDelay(pdMS_TO_TICKS(50));
             ui_update_main();
             ui_update_secondary();
             ui_update_sd_status();

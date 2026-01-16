@@ -234,6 +234,14 @@ Uses the [BattleMetrics API](https://www.battlemetrics.com/developers/documentat
 
 ## Changelog
 
+### v2.6.0 - Continuous Background Data Collection
+- **24/7 Data Collection**: Server queries now run continuously even during screensaver
+  - History and trend data recorded regardless of screen state
+  - Leave device unattended for weeks - all data points captured
+  - Essential for prediction features and long-term analytics
+- **Screensaver Shows Live Data**: Player count updates every second while screen is dimmed
+- **Display Artifact Fix**: Improved screen refresh on screensaver wake (multi-pass rendering)
+
 ### v2.5.0 - Peak Hours Heatmap & UI Improvements
 - **NEW: Peak Hours Heatmap** - Visual analytics showing when your server is busiest
   - 7 days × 6 time periods (4-hour blocks)
