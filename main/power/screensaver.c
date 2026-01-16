@@ -101,6 +101,11 @@ bool screensaver_set_active(bool active) {
                     if (ui->screen_main) {
                         lv_screen_load(ui->screen_main);
                         app_state_set_current_screen(SCREEN_MAIN);
+
+                        // Force full screen refresh to prevent display artifacts
+                        // Direct mode can cause left-side glitches without explicit invalidation
+                        lv_obj_invalidate(ui->screen_main);
+                        lv_refr_now(NULL);
                     }
                     ESP_LOGI(TAG, "Screensaver OFF (returning to main)");
                 }
