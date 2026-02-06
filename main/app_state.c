@@ -67,6 +67,10 @@ void app_state_init(void) {
     g_state.history.count = 0;
     g_state.history.unsaved_count = 0;
 
+    // Initialize multi-WiFi defaults
+    memset(&g_state.wifi_multi, 0, sizeof(wifi_multi_state_t));
+    g_state.wifi_multi.active_idx = -1;
+
     // Initialize settings defaults
     g_state.settings.refresh_interval_sec = DEFAULT_REFRESH_INTERVAL_SEC;
     g_state.settings.screensaver_timeout_sec = DEFAULT_SCREENSAVER_TIMEOUT_SEC;

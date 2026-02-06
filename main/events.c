@@ -88,6 +88,22 @@ bool events_post_secondary_click(int slot) {
     return events_post(&event);
 }
 
+bool events_post_wifi_delete_credential(int index) {
+    app_event_t event = {
+        .type = EVT_WIFI_DELETE_CREDENTIAL,
+        .data.wifi_credential.index = index
+    };
+    return events_post(&event);
+}
+
+bool events_post_wifi_connect_credential(int index) {
+    app_event_t event = {
+        .type = EVT_WIFI_CONNECT_CREDENTIAL,
+        .data.wifi_credential.index = index
+    };
+    return events_post(&event);
+}
+
 bool events_receive(app_event_t *event) {
     if (!event_queue || !event) return false;
 

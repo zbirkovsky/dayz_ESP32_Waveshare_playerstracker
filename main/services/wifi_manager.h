@@ -8,6 +8,7 @@
 
 #include <stdbool.h>
 #include "esp_err.h"
+#include "app_state.h"
 
 /**
  * Initialize WiFi subsystem and start connection
@@ -78,5 +79,32 @@ void wifi_manager_get_mac_str(char *buf, size_t buf_size);
  * @param buf_size Buffer size
  */
 void wifi_manager_get_ssid(char *buf, size_t buf_size);
+
+// ============== MULTI-WIFI API ==============
+
+/**
+ * Start a WiFi scan for nearby access points
+ * Results will be posted as EVT_WIFI_SCAN_COMPLETE event
+ */
+esp_err_t wifi_manager_start_scan(void);
+
+/**
+ * Get scan results (call after EVT_WIFI_SCAN_COMPLETE)
+ * @param out Output array of scan results
+ * @param max Maximum number of results to return
+ * @return Number of results written
+ */
+int wifi_manager_get_scan_results(wifi_scan_result_t *out, int max);
+
+/**
+ * Connect to a specific saved credential by index
+ * @param credential_idx Index in wifi_multi.credentials
+ */
+esp_err_t wifi_manager_connect_index(int credential_idx);
+
+/**
+ * Auto-connect: scan for networks and connect to strongest known one
+ */
+esp_err_t wifi_manager_auto_connect(void);
 
 #endif // WIFI_MANAGER_H

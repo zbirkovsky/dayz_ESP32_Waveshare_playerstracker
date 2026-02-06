@@ -82,6 +82,15 @@ static inline int nvs_key_history(char *buf, size_t buf_size,
     nvs_key_server(var, sizeof(var), idx, suffix)
 
 /**
+ * Declare and initialize a WiFi credential NVS key variable
+ * Format: wf{index}_{suffix} (e.g., "wf0_ssid", "wf3_pass")
+ * Usage: NVS_KEY_WIFI(key, 0, "ssid");
+ */
+#define NVS_KEY_WIFI(var, idx, suffix) \
+    char var[NVS_KEY_MAX_LEN + 1]; \
+    snprintf(var, sizeof(var), "wf%d_%s", idx, suffix)
+
+/**
  * Declare and initialize a history NVS key variable
  * Usage: NVS_KEY_HISTORY(key, 0, NVS_SUFFIX_META);
  */

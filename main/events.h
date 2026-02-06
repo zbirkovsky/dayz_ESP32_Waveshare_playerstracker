@@ -42,6 +42,12 @@ typedef enum {
     EVT_SECONDARY_SERVER_CLICKED,
     EVT_SECONDARY_DATA_UPDATED,
 
+    // WiFi multi events
+    EVT_WIFI_SCAN_START,
+    EVT_WIFI_SCAN_COMPLETE,
+    EVT_WIFI_DELETE_CREDENTIAL,
+    EVT_WIFI_CONNECT_CREDENTIAL,
+
 } event_type_t;
 
 // ============== EVENT DATA ==============
@@ -67,6 +73,10 @@ typedef struct {
 } secondary_click_data_t;
 
 typedef struct {
+    int index;  // WiFi credential index
+} wifi_credential_event_t;
+
+typedef struct {
     event_type_t type;
     union {
         screen_id_t screen;
@@ -75,6 +85,7 @@ typedef struct {
         alert_data_t alert;
         int server_index;
         secondary_click_data_t secondary;
+        wifi_credential_event_t wifi_credential;
     } data;
 } app_event_t;
 
@@ -131,6 +142,18 @@ bool events_post_alert(const char *message, uint32_t color);
  * @param slot Secondary slot index (0-2)
  */
 bool events_post_secondary_click(int slot);
+
+/**
+ * Post a WiFi delete credential event
+ * @param index Credential index to delete
+ */
+bool events_post_wifi_delete_credential(int index);
+
+/**
+ * Post a WiFi connect to saved credential event
+ * @param index Credential index to connect to
+ */
+bool events_post_wifi_connect_credential(int index);
 
 /**
  * Receive an event from the queue (non-blocking)

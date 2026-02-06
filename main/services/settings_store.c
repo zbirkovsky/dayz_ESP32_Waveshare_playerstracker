@@ -162,6 +162,9 @@ esp_err_t settings_load(void) {
              state->settings.server_count, state->settings.refresh_interval_sec,
              state->settings.first_boot);
 
+    // Load multi-WiFi credentials (with migration from single-credential format)
+    settings_load_wifi_credentials();
+
     return ESP_OK;
 }
 
@@ -274,6 +277,9 @@ esp_err_t settings_save_wifi(const char *ssid, const char *password) {
         state->settings.first_boot = false;
         app_state_unlock();
     }
+
+    // Also add/update in multi-WiFi credentials
+    settings_add_wifi_credential(ssid, password);
 
     return settings_save();
 }
@@ -395,6 +401,202 @@ esp_err_t settings_save_restart_schedule(int server_index, uint8_t hour,
     app_state_unlock();
 
     return settings_save();
+}
+
+// ============== MULTI-WIFI CREDENTIALS ==============
+
+esp_err_t settings_load_wifi_credentials(void) {
+    app_state_t *state = app_state_get();
+    nvs_handle_t nvs;
+
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs);
+    if (err != ESP_OK) {
+        // No NVS data - check if we have legacy single credential to migrate
+        if (strlen(state->settings.wifi_ssid) > 0) {
+            ESP_LOGI(TAG, "Migrating single WiFi credential to multi-WiFi format");
+            settings_add_wifi_credential(state->settings.wifi_ssid, state->settings.wifi_password);
+            settings_save_wifi_credentials();
+        }
+        return ESP_OK;
+    }
+
+    // Check if multi-WiFi data exists
+    uint8_t wifi_count = 0;
+    err = nvs_get_u8(nvs, "wifi_count", &wifi_count);
+
+    if (err != ESP_OK || wifi_count == 0) {
+        nvs_close(nvs);
+        // No multi-WiFi data - migrate from legacy single credential
+        if (strlen(state->settings.wifi_ssid) > 0) {
+            ESP_LOGI(TAG, "Migrating single WiFi credential to multi-WiFi format");
+            settings_add_wifi_credential(state->settings.wifi_ssid, state->settings.wifi_password);
+            settings_save_wifi_credentials();
+        }
+        return ESP_OK;
+    }
+
+    if (wifi_count > MAX_WIFI_CREDENTIALS) {
+        wifi_count = MAX_WIFI_CREDENTIALS;
+    }
+
+    if (!app_state_lock(100)) {
+        nvs_close(nvs);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    state->wifi_multi.count = wifi_count;
+
+    for (int i = 0; i < wifi_count; i++) {
+        NVS_KEY_WIFI(key_ssid, i, "ssid");
+        NVS_KEY_WIFI(key_pass, i, "pass");
+
+        size_t len = sizeof(state->wifi_multi.credentials[i].ssid);
+        nvs_get_str(nvs, key_ssid, state->wifi_multi.credentials[i].ssid, &len);
+
+        len = sizeof(state->wifi_multi.credentials[i].password);
+        nvs_get_str(nvs, key_pass, state->wifi_multi.credentials[i].password, &len);
+    }
+
+    app_state_unlock();
+    nvs_close(nvs);
+
+    ESP_LOGI(TAG, "Loaded %d WiFi credentials", wifi_count);
+    return ESP_OK;
+}
+
+esp_err_t settings_save_wifi_credentials(void) {
+    app_state_t *state = app_state_get();
+    nvs_handle_t nvs;
+
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for WiFi save: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    if (!app_state_lock(100)) {
+        nvs_close(nvs);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    nvs_set_u8(nvs, "wifi_count", state->wifi_multi.count);
+
+    for (int i = 0; i < state->wifi_multi.count; i++) {
+        NVS_KEY_WIFI(key_ssid, i, "ssid");
+        NVS_KEY_WIFI(key_pass, i, "pass");
+
+        nvs_set_str(nvs, key_ssid, state->wifi_multi.credentials[i].ssid);
+        nvs_set_str(nvs, key_pass, state->wifi_multi.credentials[i].password);
+    }
+
+    // Clear any old slots beyond current count
+    for (int i = state->wifi_multi.count; i < MAX_WIFI_CREDENTIALS; i++) {
+        NVS_KEY_WIFI(key_ssid, i, "ssid");
+        NVS_KEY_WIFI(key_pass, i, "pass");
+        nvs_erase_key(nvs, key_ssid);
+        nvs_erase_key(nvs, key_pass);
+    }
+
+    app_state_unlock();
+
+    nvs_commit(nvs);
+    nvs_close(nvs);
+
+    ESP_LOGI(TAG, "Saved %d WiFi credentials", state->wifi_multi.count);
+    return ESP_OK;
+}
+
+int settings_add_wifi_credential(const char *ssid, const char *password) {
+    if (!ssid || strlen(ssid) == 0) return -1;
+
+    app_state_t *state = app_state_get();
+
+    if (!app_state_lock(100)) return -1;
+
+    // Check if SSID already exists - update password
+    for (int i = 0; i < state->wifi_multi.count; i++) {
+        if (strcmp(state->wifi_multi.credentials[i].ssid, ssid) == 0) {
+            strncpy(state->wifi_multi.credentials[i].password, password ? password : "",
+                    sizeof(state->wifi_multi.credentials[i].password) - 1);
+            state->wifi_multi.credentials[i].password[sizeof(state->wifi_multi.credentials[i].password) - 1] = '\0';
+            app_state_unlock();
+            ESP_LOGI(TAG, "Updated WiFi credential: %s (idx=%d)", ssid, i);
+            return i;
+        }
+    }
+
+    // Add new credential
+    if (state->wifi_multi.count >= MAX_WIFI_CREDENTIALS) {
+        app_state_unlock();
+        ESP_LOGW(TAG, "Max WiFi credentials reached (%d)", MAX_WIFI_CREDENTIALS);
+        return -1;
+    }
+
+    int idx = state->wifi_multi.count;
+    strncpy(state->wifi_multi.credentials[idx].ssid, ssid,
+            sizeof(state->wifi_multi.credentials[idx].ssid) - 1);
+    state->wifi_multi.credentials[idx].ssid[sizeof(state->wifi_multi.credentials[idx].ssid) - 1] = '\0';
+    strncpy(state->wifi_multi.credentials[idx].password, password ? password : "",
+            sizeof(state->wifi_multi.credentials[idx].password) - 1);
+    state->wifi_multi.credentials[idx].password[sizeof(state->wifi_multi.credentials[idx].password) - 1] = '\0';
+    state->wifi_multi.count++;
+
+    app_state_unlock();
+
+    ESP_LOGI(TAG, "Added WiFi credential: %s (idx=%d)", ssid, idx);
+    return idx;
+}
+
+esp_err_t settings_delete_wifi_credential(int index) {
+    app_state_t *state = app_state_get();
+
+    if (!app_state_lock(100)) return ESP_ERR_TIMEOUT;
+
+    if (index < 0 || index >= state->wifi_multi.count) {
+        app_state_unlock();
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // Shift remaining credentials down
+    for (int i = index; i < state->wifi_multi.count - 1; i++) {
+        state->wifi_multi.credentials[i] = state->wifi_multi.credentials[i + 1];
+    }
+    state->wifi_multi.count--;
+
+    // Adjust active_idx
+    if (state->wifi_multi.active_idx == index) {
+        state->wifi_multi.active_idx = -1;
+    } else if (state->wifi_multi.active_idx > index) {
+        state->wifi_multi.active_idx--;
+    }
+
+    // Clear the last slot
+    memset(&state->wifi_multi.credentials[state->wifi_multi.count], 0, sizeof(wifi_credential_t));
+
+    app_state_unlock();
+
+    settings_save_wifi_credentials();
+
+    ESP_LOGI(TAG, "Deleted WiFi credential at index %d", index);
+    return ESP_OK;
+}
+
+int settings_find_wifi_credential(const char *ssid) {
+    if (!ssid || strlen(ssid) == 0) return -1;
+
+    app_state_t *state = app_state_get();
+
+    if (!app_state_lock(100)) return -1;
+
+    for (int i = 0; i < state->wifi_multi.count; i++) {
+        if (strcmp(state->wifi_multi.credentials[i].ssid, ssid) == 0) {
+            app_state_unlock();
+            return i;
+        }
+    }
+
+    app_state_unlock();
+    return -1;
 }
 
 // ============== JSON CONFIG EXPORT/IMPORT ==============

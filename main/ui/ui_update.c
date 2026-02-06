@@ -180,6 +180,11 @@ void ui_switch_screen(screen_id_t screen) {
         lv_obj_delete(screen_wifi);
         screen_wifi = NULL;
         kb = NULL;
+        UI_CTX->wifi_saved_list = NULL;
+        UI_CTX->wifi_scan_list = NULL;
+        UI_CTX->wifi_scan_spinner = NULL;
+        UI_CTX->wifi_password_area = NULL;
+        UI_CTX->wifi_ta_scan_pass = NULL;
     }
     if (screen != SCREEN_SERVER_SETTINGS && screen_server) {
         lv_obj_delete(screen_server);

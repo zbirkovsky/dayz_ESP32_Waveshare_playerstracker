@@ -37,4 +37,12 @@ void cb_restart_min_changed(lv_event_t *e);
 void cb_restart_interval_changed(lv_event_t *e);
 void cb_restart_manual_switch_changed(lv_event_t *e);
 
+// WiFi multi callbacks
+void cb_wifi_scan_clicked(lv_event_t *e);
+void cb_wifi_delete_credential(lv_event_t *e);
+void cb_wifi_connect_saved(lv_event_t *e);
+void cb_wifi_scan_result_clicked(lv_event_t *e);
+void cb_wifi_scan_connect_clicked(lv_event_t *e);
+void cb_wifi_add_manual_clicked(lv_event_t *e);
+
 #endif // UI_CALLBACKS_H

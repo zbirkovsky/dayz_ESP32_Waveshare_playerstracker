@@ -63,10 +63,18 @@ Real-time player count monitor for DayZ servers using an ESP32-S3 with a 7" touc
 - Auto-detection fallback (learns from player count drops)
 - Color-coded urgency (green > 30min, orange < 30min, red = imminent)
 
+### Multi-WiFi Support
+- Store up to **8 WiFi credentials** for different locations
+- **Auto-connect**: Scans and connects to strongest known network on disconnect
+- **WiFi scan UI**: Discover nearby networks with signal strength indicators
+- Manage saved networks (connect, delete) from the WiFi Settings screen
+- Manual SSID entry for hidden networks
+- Backward-compatible migration from single-credential format
+
 ### Connectivity
 - WiFi configuration via touch UI
 - SNTP time synchronization for accurate CET timestamps
-- Auto-reconnect on network drops
+- Smart auto-reconnect: retries current network 3 times, then scans for alternatives
 - BattleMetrics API integration (no API key required)
 
 ## Hardware Required
@@ -233,6 +241,25 @@ Managed automatically via ESP-IDF component manager:
 Uses the [BattleMetrics API](https://www.battlemetrics.com/developers/documentation) to fetch server status. No API key required for basic queries.
 
 ## Changelog
+
+### v2.7.0 - Multi-WiFi Credential Support
+- **NEW: Multi-WiFi Storage**: Save up to 8 WiFi networks for portable use
+  - Device remembers credentials across locations (home, office, hotspot, etc.)
+  - Credentials persisted in NVS with automatic migration from single-WiFi format
+- **NEW: WiFi Scan UI**: Redesigned WiFi Settings screen with network discovery
+  - Scan for nearby networks with real-time signal strength (RSSI) display
+  - Color-coded signal indicators (green/yellow/red)
+  - Tap a known network to connect instantly
+  - Tap an unknown network to enter password and save
+  - Manual SSID entry for hidden networks
+- **NEW: Saved Networks Management**: View, connect, and delete saved WiFi credentials
+  - Connected network highlighted with status indicator
+  - Connection info panel showing SSID, signal, IP, MAC, and time sync status
+- **Smart Auto-Connect**: Automatic failover to known networks on disconnect
+  - After 3 failed reconnect attempts, scans for alternative known networks
+  - Connects to strongest available known network by RSSI
+  - Seamless roaming between saved networks
+- **17 files modified** across all layers (config, state, events, services, UI)
 
 ### v2.6.0 - Continuous Background Data Collection
 - **24/7 Data Collection**: Server queries now run continuously even during screensaver

@@ -77,10 +77,35 @@ typedef struct {
     uint16_t count;                 // history_count
 } history_file_header_t;
 
+// WiFi credential pair
+typedef struct {
+    char ssid[33];
+    char password[65];
+} wifi_credential_t;
+
+// WiFi scan result entry
+typedef struct {
+    char ssid[33];
+    int8_t rssi;
+    uint8_t authmode;    // wifi_auth_mode_t
+    bool known;          // has saved credentials
+    uint8_t cred_idx;    // index if known
+} wifi_scan_result_t;
+
+// Multi-WiFi state
+typedef struct {
+    wifi_credential_t credentials[MAX_WIFI_CREDENTIALS];
+    uint8_t count;
+    int8_t active_idx;              // currently connected credential (-1=none)
+    wifi_scan_result_t scan_results[WIFI_SCAN_MAX_RESULTS];
+    uint8_t scan_count;
+    bool scan_in_progress;
+} wifi_multi_state_t;
+
 // Application settings (persisted to NVS)
 typedef struct {
-    char wifi_ssid[33];
-    char wifi_password[65];
+    char wifi_ssid[33];             // Legacy single credential (for migration)
+    char wifi_password[65];         // Legacy single credential (for migration)
     uint16_t refresh_interval_sec;      // 10-300 seconds
     uint16_t screensaver_timeout_sec;   // 0=disabled, or 300/600/900/1800/3600/5400/7200/14400
     uint8_t active_server_index;
@@ -165,6 +190,7 @@ typedef struct {
     runtime_state_t runtime;        // Runtime volatile state
     ui_state_t ui;                  // UI state
     history_state_t history;        // Player history
+    wifi_multi_state_t wifi_multi;  // Multi-WiFi credentials & scan state
     SemaphoreHandle_t mutex;        // Thread safety mutex
 } app_state_t;
 

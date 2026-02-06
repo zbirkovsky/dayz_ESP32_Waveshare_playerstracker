@@ -70,6 +70,37 @@ esp_err_t settings_save_restart_schedule(int server_index, uint8_t hour,
  */
 void settings_init(void);
 
+// ============== MULTI-WIFI API ==============
+
+/**
+ * Load all WiFi credentials from NVS into app_state.wifi_multi
+ * Called automatically by settings_load()
+ */
+esp_err_t settings_load_wifi_credentials(void);
+
+/**
+ * Save all WiFi credentials from app_state.wifi_multi to NVS
+ */
+esp_err_t settings_save_wifi_credentials(void);
+
+/**
+ * Add or update a WiFi credential
+ * If SSID already exists, updates the password. Otherwise adds new.
+ * @return Index of credential, or -1 if full
+ */
+int settings_add_wifi_credential(const char *ssid, const char *password);
+
+/**
+ * Delete a WiFi credential by index
+ */
+esp_err_t settings_delete_wifi_credential(int index);
+
+/**
+ * Find a WiFi credential by SSID
+ * @return Index of matching credential, or -1 if not found
+ */
+int settings_find_wifi_credential(const char *ssid);
+
 // ============== JSON CONFIG EXPORT/IMPORT ==============
 
 /**

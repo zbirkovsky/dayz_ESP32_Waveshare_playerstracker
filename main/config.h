@@ -8,7 +8,7 @@
 
 // ============== APPLICATION CONSTANTS ==============
 #define APP_NAME            "DayZ Server Monitor"
-#define APP_VERSION         "2.6.0"
+#define APP_VERSION         "2.7.0"
 
 #define MAX_SERVERS         5
 #define MAX_HISTORY_ENTRIES 10080   // 7 days at 1 min intervals
@@ -106,6 +106,11 @@
 #define HTTP_RESPONSE_BUFFER_SIZE   16384
 #define HTTP_TIMEOUT_MS             10000
 #define WIFI_CONNECT_TIMEOUT_MS     10000
+
+// Multi-WiFi
+#define MAX_WIFI_CREDENTIALS        8
+#define WIFI_SCAN_MAX_RESULTS       20
+#define WIFI_RECONNECT_SCAN_THRESHOLD 3
 
 // BattleMetrics API
 #define BATTLEMETRICS_API_BASE      "https://api.battlemetrics.com/servers/"

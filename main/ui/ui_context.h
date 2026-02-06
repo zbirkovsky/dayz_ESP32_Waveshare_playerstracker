@@ -75,6 +75,14 @@ typedef struct {
     lv_obj_t *secondary_container;
     secondary_box_widgets_t secondary_boxes[MAX_SECONDARY_SERVERS];
     lv_obj_t *add_server_boxes[MAX_SECONDARY_SERVERS];
+
+    // WiFi settings widgets (multi-WiFi)
+    lv_obj_t *wifi_saved_list;      // Scrollable saved networks container
+    lv_obj_t *wifi_scan_list;       // Scrollable scan results container
+    lv_obj_t *wifi_scan_spinner;    // Scanning indicator
+    lv_obj_t *wifi_password_area;   // Password entry area for scan result
+    lv_obj_t *wifi_ta_scan_pass;    // Password text area for scanned network
+    int wifi_selected_scan_idx;     // Currently selected scan result index
 } ui_context_t;
 
 /**

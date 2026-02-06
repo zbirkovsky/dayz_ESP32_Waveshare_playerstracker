@@ -27,11 +27,20 @@ void event_handler_process(void) {
                 ui_switch_screen(evt.data.screen);
                 break;
 
-            case EVT_WIFI_SAVE:
+            case EVT_WIFI_SAVE: {
+                // Add/update credential in multi-WiFi, then connect
+                int cred_idx = settings_add_wifi_credential(evt.data.wifi.ssid, evt.data.wifi.password);
+                settings_save_wifi_credentials();
+                // Also update legacy fields
                 settings_save_wifi(evt.data.wifi.ssid, evt.data.wifi.password);
                 wifi_manager_reconnect(evt.data.wifi.ssid, evt.data.wifi.password);
-                ui_switch_screen(SCREEN_SETTINGS);
+                if (cred_idx >= 0 && app_state_lock(100)) {
+                    state->wifi_multi.active_idx = cred_idx;
+                    app_state_unlock();
+                }
+                ui_switch_screen(SCREEN_WIFI_SETTINGS);
                 break;
+            }
 
             case EVT_SERVER_ADD: {
                 int new_idx = settings_add_server(evt.data.server.server_id, evt.data.server.display_name);
@@ -193,6 +202,36 @@ void event_handler_process(void) {
             case EVT_SECONDARY_DATA_UPDATED:
                 // Refresh secondary boxes display
                 ui_update_secondary();
+                break;
+
+            case EVT_WIFI_SCAN_START:
+                wifi_manager_start_scan();
+                break;
+
+            case EVT_WIFI_SCAN_COMPLETE:
+                // Refresh WiFi screen if visible
+                if (app_state_get_current_screen() == SCREEN_WIFI_SETTINGS) {
+                    ui_switch_screen(SCREEN_WIFI_SETTINGS);
+                }
+                break;
+
+            case EVT_WIFI_DELETE_CREDENTIAL: {
+                int del_idx = evt.data.wifi_credential.index;
+                bool was_active = (state->wifi_multi.active_idx == del_idx);
+                settings_delete_wifi_credential(del_idx);
+                if (was_active && state->wifi_multi.count > 0) {
+                    // Connect to first available credential
+                    wifi_manager_connect_index(0);
+                }
+                // Refresh WiFi screen
+                if (app_state_get_current_screen() == SCREEN_WIFI_SETTINGS) {
+                    ui_switch_screen(SCREEN_WIFI_SETTINGS);
+                }
+                break;
+            }
+
+            case EVT_WIFI_CONNECT_CREDENTIAL:
+                wifi_manager_connect_index(evt.data.wifi_credential.index);
                 break;
 
             default:

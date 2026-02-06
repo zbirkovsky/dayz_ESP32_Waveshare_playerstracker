@@ -101,7 +101,7 @@ void app_init_network(void) {
     app_state_t *state = app_state_get();
 
     // Handle first boot defaults
-    if (state->settings.first_boot || strlen(state->settings.wifi_ssid) == 0) {
+    if (state->settings.first_boot || (strlen(state->settings.wifi_ssid) == 0 && state->wifi_multi.count == 0)) {
         ESP_LOGI(TAG, "First boot detected");
         // Default credentials for backward compatibility
         strncpy(state->settings.wifi_ssid, "meshnetwork2131", sizeof(state->settings.wifi_ssid) - 1);
@@ -109,14 +109,34 @@ void app_init_network(void) {
         strncpy(state->settings.wifi_password, "9696Polikut.", sizeof(state->settings.wifi_password) - 1);
         state->settings.wifi_password[sizeof(state->settings.wifi_password) - 1] = '\0';
         state->settings.first_boot = false;
+        // Add to multi-WiFi
+        settings_add_wifi_credential(state->settings.wifi_ssid, state->settings.wifi_password);
+        settings_add_wifi_credential("WiFimodem-B4200", "xtMP9NQPBCcmBpdB");
+        settings_save_wifi_credentials();
         settings_save();
+    }
+
+    // Ensure second WiFi credential exists (added post-deployment)
+    if (settings_find_wifi_credential("WiFimodem-B4200") < 0) {
+        settings_add_wifi_credential("WiFimodem-B4200", "xtMP9NQPBCcmBpdB");
+        settings_save_wifi_credentials();
     }
 
     // Initialize BattleMetrics API client
     battlemetrics_init();
 
+    // Determine initial WiFi credentials to connect with
+    const char *init_ssid = state->settings.wifi_ssid;
+    const char *init_pass = state->settings.wifi_password;
+
+    // Prefer first multi-WiFi credential if available
+    if (state->wifi_multi.count > 0) {
+        init_ssid = state->wifi_multi.credentials[0].ssid;
+        init_pass = state->wifi_multi.credentials[0].password;
+    }
+
     // Initialize WiFi
-    wifi_manager_init(state->settings.wifi_ssid, state->settings.wifi_password);
+    wifi_manager_init(init_ssid, init_pass);
 
     // Wait for WiFi connection
     ESP_LOGI(TAG, "Waiting for WiFi...");
@@ -151,7 +171,10 @@ void app_init_network(void) {
             ESP_LOGW(TAG, "Time sync timeout, timestamps may be wrong");
         }
     } else {
-        ESP_LOGW(TAG, "WiFi connection timeout, will retry in background");
+        ESP_LOGW(TAG, "WiFi connection timeout, trying auto-connect...");
+        if (state->wifi_multi.count > 1) {
+            wifi_manager_auto_connect();
+        }
     }
 
     // Start secondary server fetch background task
