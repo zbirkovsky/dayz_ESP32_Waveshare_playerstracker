@@ -55,6 +55,7 @@ typedef struct {
     uint32_t timestamps[TREND_HISTORY_SIZE];
     uint8_t head;
     uint8_t count;
+    int16_t cached_delta;   // Pre-calculated trend direction
 } trend_data_t;
 
 // Secondary server runtime status
@@ -151,7 +152,6 @@ typedef struct {
     char map_name[32];              // Map name (e.g., "chernarusplus")
     bool is_daytime;                // true = day, false = night
     bool wifi_connected;
-    volatile bool refresh_requested;
     connection_health_t connection;
     int server_rank;                    // Server rank from BattleMetrics (0 = unranked)
 
@@ -237,17 +237,6 @@ bool app_state_is_wifi_connected(void);
 void app_state_set_wifi_connected(bool connected);
 
 /**
- * Request a data refresh (thread-safe)
- */
-void app_state_request_refresh(void);
-
-/**
- * Check and clear refresh request (thread-safe)
- * @return true if refresh was requested
- */
-bool app_state_consume_refresh_request(void);
-
-/**
  * Update player count and related data (thread-safe)
  */
 void app_state_update_player_data(int players, int max_players,
@@ -316,6 +305,19 @@ int app_state_calculate_main_trend(void);
  * @return Number of data points (0 if no data)
  */
 int app_state_get_main_trend_count(void);
+
+/**
+ * Get cached trend delta for a secondary server (O(1), no mutex)
+ * @param slot Secondary slot index (0-2)
+ * @return Cached player count change
+ */
+int app_state_get_cached_trend(int slot);
+
+/**
+ * Get cached trend delta for the main server (O(1), no mutex)
+ * @return Cached player count change
+ */
+int app_state_get_cached_main_trend(void);
 
 /**
  * Clear main server trend data (call when switching active server)

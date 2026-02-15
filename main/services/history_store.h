@@ -140,6 +140,12 @@ esp_err_t history_init_json_dir(int server_index);
 int history_get_json_file_count(int server_index);
 
 /**
+ * Flush and close the cached JSON file handle.
+ * Call before server switch, SD save, or shutdown.
+ */
+void history_flush_json(void);
+
+/**
  * Clear ALL history storage (RAM, NVS, and SD card JSON files)
  * Use this to start fresh with clean data
  */

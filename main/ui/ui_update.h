@@ -29,6 +29,12 @@ void ui_update_main(void);
 void ui_update_sd_status(void);
 
 /**
+ * Update all main screen elements with a single LVGL lock
+ * Combines ui_update_main + ui_update_secondary + ui_update_sd_status
+ */
+void ui_update_all(void);
+
+/**
  * Format raw map name to display name
  */
 const char* map_format_name(const char *raw_map);

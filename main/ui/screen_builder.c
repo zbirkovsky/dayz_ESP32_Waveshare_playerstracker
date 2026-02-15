@@ -1133,7 +1133,7 @@ void screen_builder_create_heatmap(void) {
     memset(&heatmap_widgets, 0, sizeof(heatmap_widgets));
     heatmap_widgets.screen = screen_heatmap;
     screen_heatmap_init(&heatmap_widgets);
-    screen_heatmap_refresh();
+    screen_heatmap_schedule_refresh();
 }
 
 void screen_builder_create_secondary_boxes(void) {

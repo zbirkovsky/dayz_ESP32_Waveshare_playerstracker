@@ -8,6 +8,7 @@
 #include "app_state.h"
 #include "events.h"
 #include "services/settings_store.h"
+#include "services/server_query.h"
 #include "esp_lvgl_port.h"
 #include <string.h>
 
@@ -15,12 +16,12 @@
 
 void cb_refresh_clicked(lv_event_t *e) {
     (void)e;
-    app_state_request_refresh();
+    server_query_request_refresh();
 }
 
 void cb_card_clicked(lv_event_t *e) {
     (void)e;
-    app_state_request_refresh();
+    server_query_request_refresh();
 }
 
 void cb_settings_clicked(lv_event_t *e) {

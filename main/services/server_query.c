@@ -7,7 +7,10 @@
 #include <string.h>
 #include <time.h>
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "app_state.h"
+#include "events.h"
 #include "services/wifi_manager.h"
 #include "services/battlemetrics.h"
 #include "services/history_store.h"
@@ -15,6 +18,9 @@
 #include "services/restart_manager.h"
 
 static const char *TAG = "server_query";
+
+static TaskHandle_t query_task_handle = NULL;
+static volatile bool task_running = false;
 
 void server_query_execute(void) {
     app_state_t *state = app_state_get();
@@ -72,5 +78,63 @@ void server_query_execute(void) {
         restart_check_for_restart(srv, status.players);
     } else {
         ESP_LOGE(TAG, "Query failed: %s", battlemetrics_get_last_error());
+    }
+}
+
+static void server_query_task(void *arg) {
+    ESP_LOGI(TAG, "Server query background task started");
+
+    // Initial fetch immediately
+    server_query_execute();
+    events_post_simple(EVT_DATA_UPDATED);
+
+    while (task_running) {
+        app_state_t *state = app_state_get();
+        int interval_sec = state->settings.refresh_interval_sec;
+
+        // Block until notified OR timeout expires (replaces busy-polling loop)
+        uint32_t notify_value = 0;
+        xTaskNotifyWait(0, ULONG_MAX, &notify_value,
+                        pdMS_TO_TICKS(interval_sec * 1000));
+
+        if (!task_running) break;
+
+        server_query_execute();
+        events_post_simple(EVT_DATA_UPDATED);
+    }
+
+    ESP_LOGI(TAG, "Server query background task stopped");
+    query_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+void server_query_task_start(void) {
+    if (query_task_handle != NULL) {
+        ESP_LOGW(TAG, "Server query task already running");
+        return;
+    }
+
+    task_running = true;
+
+    BaseType_t ret = xTaskCreate(
+        server_query_task,
+        "server_query",
+        8192,
+        NULL,
+        3,
+        &query_task_handle
+    );
+
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create server query task");
+        task_running = false;
+    } else {
+        ESP_LOGI(TAG, "Server query background task created");
+    }
+}
+
+void server_query_request_refresh(void) {
+    if (query_task_handle) {
+        xTaskNotify(query_task_handle, 1, eSetValueWithOverwrite);
     }
 }

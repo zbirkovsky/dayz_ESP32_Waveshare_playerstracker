@@ -9,17 +9,19 @@
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
 static const char *TAG = "battlemetrics";
 
-static char http_response[HTTP_RESPONSE_BUFFER_SIZE];
+static char *http_response = NULL;
 static int http_response_len = 0;
 static char last_error[64] = "";
 static bool last_query_success = false;
 static SemaphoreHandle_t bm_mutex = NULL;
+static esp_http_client_handle_t s_client = NULL;
 
 void battlemetrics_init(void) {
     if (bm_mutex == NULL) {
@@ -30,12 +32,19 @@ void battlemetrics_init(void) {
             ESP_LOGI(TAG, "BattleMetrics client initialized");
         }
     }
+    if (!http_response) {
+        http_response = heap_caps_malloc(HTTP_RESPONSE_BUFFER_SIZE,
+                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!http_response) {
+            ESP_LOGE(TAG, "Failed to allocate HTTP response buffer in PSRAM");
+        }
+    }
 }
 
 static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
     switch (evt->event_id) {
         case HTTP_EVENT_ON_DATA:
-            if (http_response_len + evt->data_len < sizeof(http_response) - 1) {
+            if (http_response && http_response_len + evt->data_len < HTTP_RESPONSE_BUFFER_SIZE - 1) {
                 memcpy(http_response + http_response_len, evt->data, evt->data_len);
                 http_response_len += evt->data_len;
                 http_response[http_response_len] = 0;
@@ -45,6 +54,19 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
             break;
     }
     return ESP_OK;
+}
+
+static esp_http_client_handle_t get_or_create_client(void) {
+    if (s_client) return s_client;
+    esp_http_client_config_t config = {
+        .url = BATTLEMETRICS_API_BASE,
+        .event_handler = http_event_handler,
+        .timeout_ms = HTTP_TIMEOUT_MS,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .keep_alive_enable = true,
+    };
+    s_client = esp_http_client_init(&config);
+    return s_client;
 }
 
 // Parse server time and map from details
@@ -122,35 +144,51 @@ esp_err_t battlemetrics_query(const char *server_id, server_status_t *status) {
 
     // Prepare request
     http_response_len = 0;
-    memset(http_response, 0, sizeof(http_response));
+    if (http_response) http_response[0] = 0;
 
     char url[256];
     snprintf(url, sizeof(url), "%s%s", BATTLEMETRICS_API_BASE, server_id);
 
-    esp_http_client_config_t config = {
-        .url = url,
-        .event_handler = http_event_handler,
-        .timeout_ms = HTTP_TIMEOUT_MS,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-    };
+    esp_http_client_handle_t client = get_or_create_client();
+    if (!client) {
+        strncpy(last_error, "Failed to create HTTP client", sizeof(last_error) - 1);
+        last_query_success = false;
+        if (bm_mutex) xSemaphoreGive(bm_mutex);
+        return ESP_ERR_NO_MEM;
+    }
 
-    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_url(client, url);
     esp_err_t err = esp_http_client_perform(client);
 
     if (err != ESP_OK) {
-        snprintf(last_error, sizeof(last_error), "HTTP failed: %s", esp_err_to_name(err));
-        ESP_LOGE(TAG, "%s", last_error);
+        // Connection broken - destroy and retry once
+        ESP_LOGW(TAG, "HTTP failed (%s), retrying with fresh connection", esp_err_to_name(err));
         esp_http_client_cleanup(client);
-        last_query_success = false;
-        if (bm_mutex) xSemaphoreGive(bm_mutex);
-        return err;
+        s_client = NULL;
+        http_response_len = 0;
+        if (http_response) http_response[0] = 0;
+
+        client = get_or_create_client();
+        if (client) {
+            esp_http_client_set_url(client, url);
+            err = esp_http_client_perform(client);
+        }
+        if (err != ESP_OK) {
+            snprintf(last_error, sizeof(last_error), "HTTP failed: %s", esp_err_to_name(err));
+            ESP_LOGE(TAG, "%s", last_error);
+            if (client) {
+                esp_http_client_cleanup(client);
+                s_client = NULL;
+            }
+            last_query_success = false;
+            if (bm_mutex) xSemaphoreGive(bm_mutex);
+            return err;
+        }
     }
 
     int status_code = esp_http_client_get_status_code(client);
     ESP_LOGI(TAG, "HTTP GET Status = %d, content_length = %lld",
              status_code, esp_http_client_get_content_length(client));
-
-    esp_http_client_cleanup(client);
 
     if (status_code != 200) {
         snprintf(last_error, sizeof(last_error), "HTTP status %d", status_code);

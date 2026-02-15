@@ -166,27 +166,39 @@ On first boot:
 ```
 DayZ_servertracker/
 ├── main/
-│   ├── main.c                    # Application entry point & UI screens
+│   ├── main.c                    # Entry point, event-driven main loop
 │   ├── config.h                  # Constants, pins, and configuration
 │   ├── app_state.h/.c            # Centralized state management (thread-safe)
+│   ├── app_init.c                # Initialization sequence
 │   ├── events.h/.c               # Event queue for UI/logic decoupling
+│   ├── events/
+│   │   └── event_handler.h/.c    # Event dispatch with deferred I/O support
 │   ├── drivers/
 │   │   ├── buzzer.h/.c           # Buzzer hardware driver
-│   │   ├── sd_card.h/.c          # SD card & CH422G IO expander
-│   │   └── display.h/.c          # LCD + Touch + LVGL initialization
+│   │   ├── display.h/.c          # LCD + Touch + LVGL initialization
+│   │   ├── sd_card.h/.c          # SD card (SPI) driver
+│   │   └── io_expander.h/.c      # CH422G I2C driver
 │   ├── services/
-│   │   ├── wifi_manager.h/.c     # WiFi connection & SNTP sync
-│   │   ├── battlemetrics.h/.c    # BattleMetrics API client (cJSON)
-│   │   ├── settings_store.h/.c   # NVS settings persistence
-│   │   └── history_store.h/.c    # Player history storage
+│   │   ├── wifi_manager.h/.c     # WiFi + SNTP + multi-credential auto-connect
+│   │   ├── battlemetrics.h/.c    # BattleMetrics API client (persistent HTTP)
+│   │   ├── server_query.h/.c     # Background server polling task
+│   │   ├── secondary_fetch.h/.c  # Secondary server background task
+│   │   ├── settings_store.h/.c   # NVS settings persistence + JSON export
+│   │   ├── history_store.h/.c    # Player history (JSON + binary + NVS)
+│   │   ├── restart_manager.h/.c  # Server restart detection & countdown
+│   │   └── alert_manager.h/.c    # Player threshold alerts
 │   ├── ui/
+│   │   ├── ui_context.h          # Widget pointer storage
 │   │   ├── ui_styles.h/.c        # Color definitions & shared styles
-│   │   └── ui_widgets.h/.c       # Reusable widget factories
-│   ├── idf_component.yml         # LVGL dependencies
-│   └── CMakeLists.txt            # Component build config
-├── build.ps1                     # Windows build script
-├── flash.ps1                     # Windows flash script
-├── checkports.ps1                # COM port detection helper
+│   │   ├── ui_widgets.h/.c       # Reusable widget factories
+│   │   ├── ui_update.h/.c        # UI refresh functions (consolidated locks)
+│   │   ├── ui_callbacks.h/.c     # Touch event callbacks
+│   │   ├── screen_builder.h/.c   # Screen creation
+│   │   ├── screen_history.h/.c   # History chart screen
+│   │   ├── screen_heatmap.h/.c   # Peak hours heatmap screen
+│   │   └── screen_screensaver.h/.c # Screensaver screen
+│   └── power/
+│       └── screensaver.h/.c      # Screensaver + power management
 ├── partitions.csv                # Custom partition table (3MB app)
 ├── CMakeLists.txt                # Project build config
 └── sdkconfig.defaults            # ESP-IDF configuration
@@ -241,6 +253,39 @@ Managed automatically via ESP-IDF component manager:
 Uses the [BattleMetrics API](https://www.battlemetrics.com/developers/documentation) to fetch server status. No API key required for basic queries.
 
 ## Changelog
+
+### v2.8.0 - Performance Optimization
+
+Two rounds of deep performance work targeting I/O waste, CPU overhead, and UI responsiveness.
+
+**Architecture: Event-driven main loop**
+- Main loop now blocks on event queue instead of busy-polling (100ms idle wake)
+- Server queries run in a dedicated background task with task notification wake
+- Secondary server fetches use task notifications instead of flag polling
+- Deferred I/O on server switch: UI updates instantly, history save/load runs after LVGL renders
+
+**I/O & Storage**
+- Cached file handle for JSON history append - eliminates 7 syscalls per entry (~20,000/day saved)
+- Replaced cJSON per-line parsing with `sscanf` in history loader - zero malloc/free per entry
+- Date-based filename filtering skips files outside requested range without opening them
+- Removed `settings_export_to_json()` from every `settings_save()` - now only on server add/delete
+- Reduced heatmap PSRAM allocation from 120KB to 24KB
+
+**CPU & Rendering**
+- Trend deltas pre-calculated when data arrives, UI reads cached value (O(1), no mutex)
+- Consolidated LVGL locks: `ui_update_all()` does main + secondary + SD status in one lock
+- History chart pre-samples data into stack buffer, populates chart without re-iterating
+- Heatmap refresh deferred via LVGL timer to avoid watchdog timeout on screen load
+- Persistent HTTP client with keep-alive (reuses TLS connection across queries)
+- HTTP response buffer allocated in PSRAM (16KB off main heap)
+
+**Responsiveness**
+- Screensaver touch lock timeout increased from 10ms to 50ms (prevents dropped taps during renders)
+- Screensaver wake no longer blocks for 130ms forced refresh
+
+**Code Quality**
+- Deduplicated 200+ line switch statement in event handler (single `handle_event()` function)
+- ~250 fewer lines of code, ~3KB flash saved
 
 ### v2.7.0 - Multi-WiFi Credential Support
 - **NEW: Multi-WiFi Storage**: Save up to 8 WiFi networks for portable use

@@ -30,7 +30,6 @@ void app_state_init(void) {
     g_state.runtime.server_time[0] = '\0';
     g_state.runtime.is_daytime = true;
     g_state.runtime.wifi_connected = false;
-    g_state.runtime.refresh_requested = false;
 
     // Initialize secondary server data
     memset(g_state.runtime.secondary, 0, sizeof(g_state.runtime.secondary));
@@ -115,17 +114,6 @@ void app_state_set_wifi_connected(bool connected) {
     g_state.runtime.wifi_connected = connected;
 }
 
-void app_state_request_refresh(void) {
-    g_state.runtime.refresh_requested = true;
-}
-
-bool app_state_consume_refresh_request(void) {
-    if (g_state.runtime.refresh_requested) {
-        g_state.runtime.refresh_requested = false;
-        return true;
-    }
-    return false;
-}
 
 void app_state_update_player_data(int players, int max_players,
                                    const char *server_time, bool is_daytime,
@@ -203,6 +191,36 @@ void app_state_update_secondary_status(int slot, int players, int max_players,
     }
 }
 
+// Private: calculate trend delta from a trend_data_t (caller must hold lock)
+static int16_t calculate_trend_unlocked(const trend_data_t *trend) {
+    if (trend->count < 2) return 0;
+
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000000);
+    int oldest_idx = -1;
+    int newest_idx = -1;
+    uint32_t oldest_time = now;
+    uint32_t newest_time = 0;
+
+    for (int i = 0; i < trend->count; i++) {
+        uint32_t age = now - trend->timestamps[i];
+        if (age <= TREND_WINDOW_SEC) {
+            if (trend->timestamps[i] < oldest_time) {
+                oldest_time = trend->timestamps[i];
+                oldest_idx = i;
+            }
+            if (trend->timestamps[i] > newest_time) {
+                newest_time = trend->timestamps[i];
+                newest_idx = i;
+            }
+        }
+    }
+
+    if (oldest_idx >= 0 && newest_idx >= 0 && oldest_idx != newest_idx) {
+        return trend->player_counts[newest_idx] - trend->player_counts[oldest_idx];
+    }
+    return 0;
+}
+
 void app_state_add_trend_point(int slot, int player_count) {
     if (slot < 0 || slot >= MAX_SECONDARY_SERVERS) return;
     if (player_count < 0) return;  // Don't add invalid data
@@ -218,6 +236,9 @@ void app_state_add_trend_point(int slot, int player_count) {
         if (trend->count < TREND_HISTORY_SIZE) {
             trend->count++;
         }
+
+        // Pre-calculate trend while we have the lock
+        trend->cached_delta = calculate_trend_unlocked(trend);
 
         app_state_unlock();
     }
@@ -279,7 +300,11 @@ void app_state_add_main_trend_point(int player_count) {
             trend->count++;
         }
 
-        ESP_LOGI(TAG, "Trend: added %d players, count=%d", player_count, trend->count);
+        // Pre-calculate trend while we have the lock
+        trend->cached_delta = calculate_trend_unlocked(trend);
+
+        ESP_LOGI(TAG, "Trend: added %d players, count=%d, delta=%d",
+                 player_count, trend->count, trend->cached_delta);
 
         app_state_unlock();
     }
@@ -328,6 +353,15 @@ int app_state_calculate_main_trend(void) {
     }
 
     return delta;
+}
+
+int app_state_get_cached_trend(int slot) {
+    if (slot < 0 || slot >= MAX_SECONDARY_SERVERS) return 0;
+    return g_state.runtime.secondary[slot].trend.cached_delta;
+}
+
+int app_state_get_cached_main_trend(void) {
+    return g_state.runtime.main_trend.cached_delta;
 }
 
 int app_state_get_main_trend_count(void) {

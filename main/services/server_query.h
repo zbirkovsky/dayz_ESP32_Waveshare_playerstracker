@@ -12,4 +12,16 @@
  */
 void server_query_execute(void);
 
+/**
+ * Start the background server query task
+ * Periodically calls server_query_execute() and posts EVT_DATA_UPDATED
+ */
+void server_query_task_start(void);
+
+/**
+ * Request an immediate refresh from the background task
+ * Called when user presses the refresh button
+ */
+void server_query_request_refresh(void);
+
 #endif // SERVER_QUERY_H

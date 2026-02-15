@@ -5,9 +5,12 @@
 #include "screensaver.h"
 #include "config.h"
 #include "app_state.h"
+#include "events.h"
 #include "drivers/display.h"
 #include "ui/screen_screensaver.h"
 #include "ui/ui_context.h"
+#include "ui/ui_update.h"
+#include "services/server_query.h"
 #include "esp_lvgl_port.h"
 #include "esp_timer.h"
 #include "esp_log.h"
@@ -103,27 +106,15 @@ bool screensaver_set_active(bool active) {
                         lv_screen_load(ui->screen_main);
                         app_state_set_current_screen(SCREEN_MAIN);
 
-                        // Force full screen refresh to prevent display artifacts
-                        // Direct mode with bounce buffers can leave left-side artifacts
-                        // because RGB panels render left-to-right in 10-line chunks.
-                        // Solution: Multiple refresh cycles to ensure all bounces complete.
+                        // Request fresh data from background task
+                        server_query_request_refresh();
 
-                        // First refresh: process the screen load
+                        // Force one full refresh to clear bounce buffer artifacts
                         lv_obj_invalidate(ui->screen_main);
                         lv_refr_now(NULL);
                         lvgl_port_unlock();
 
-                        // Wait for bounce buffer transfers to complete
-                        vTaskDelay(pdMS_TO_TICKS(30));
-
-                        // Second refresh cycle: catch any missed areas
-                        if (lvgl_port_lock(100)) {
-                            lv_obj_invalidate(ui->screen_main);
-                            lv_refr_now(NULL);
-                            lvgl_port_unlock();
-                        }
-
-                        // Third refresh: ensure clean state
+                        // Single follow-up refresh for any missed bounce areas
                         vTaskDelay(pdMS_TO_TICKS(30));
                         if (lvgl_port_lock(100)) {
                             lv_obj_invalidate(ui->screen_main);
@@ -169,7 +160,7 @@ static void on_screen_touch_pressed(lv_event_t *e) {
     (void)e;
     app_state_t *state = app_state_get();
 
-    ESP_LOGW(TAG, "LVGL touch event fired (ss_active=%d)", state->ui.screensaver_active);
+    ESP_LOGD(TAG, "LVGL touch event fired (ss_active=%d)", state->ui.screensaver_active);
 
     // Reset activity timer on any touch
     screensaver_reset_activity();
@@ -210,7 +201,7 @@ void screensaver_tick(void) {
     if (state->ui.screensaver_active) {
         int64_t now = esp_timer_get_time() / 1000;
         if (now - s_last_ss_update > 1000) {
-            if (lvgl_port_lock(10)) {
+            if (lvgl_port_lock(50)) {
                 screen_screensaver_update();
                 lvgl_port_unlock();
             }
@@ -223,8 +214,8 @@ void screensaver_tick(void) {
         int64_t now = esp_timer_get_time() / 1000;
         int64_t elapsed_ms = now - state->ui.last_activity_time;
 
-        // Debug: log elapsed time every 30 seconds
-        if (now - s_last_elapsed_log > 30000) {
+        // Debug: log elapsed time every 120 seconds
+        if (now - s_last_elapsed_log > 120000) {
             ESP_LOGI(TAG, "SS elapsed: %lld sec / %d sec timeout",
                      elapsed_ms / 1000, state->settings.screensaver_timeout_sec);
             s_last_elapsed_log = now;
@@ -239,15 +230,15 @@ void screensaver_tick(void) {
     // Touch handling with debouncing
     lv_indev_t *touch_indev = display_get_touch_indev();
     if (touch_indev) {
-        if (lvgl_port_lock(10)) {
+        if (lvgl_port_lock(50)) {
             lv_indev_state_t touch_state = lv_indev_get_state(touch_indev);
             lvgl_port_unlock();
 
             int64_t now = esp_timer_get_time() / 1000;
 
-            // Debug: log raw touch state every 5 seconds
-            if (now - s_last_touch_debug > 5000) {
-                ESP_LOGI(TAG, "Touch debug: raw=%s, ss_active=%d, timeout=%d",
+            // Debug: log raw touch state every 60 seconds
+            if (now - s_last_touch_debug > 60000) {
+                ESP_LOGD(TAG, "Touch debug: raw=%s, ss_active=%d, timeout=%d",
                          touch_state == LV_INDEV_STATE_PRESSED ? "PRESSED" : "released",
                          state->ui.screensaver_active,
                          state->settings.screensaver_timeout_sec);
@@ -258,7 +249,7 @@ void screensaver_tick(void) {
                 // Track when touch started (for debouncing)
                 if (s_touch_press_start == 0) {
                     s_touch_press_start = now;
-                    ESP_LOGW(TAG, "Touch PRESS detected (raw)");
+                    ESP_LOGD(TAG, "Touch PRESS detected (raw)");
                 }
 
                 // Debounce: require 50ms of continuous press to count as real touch

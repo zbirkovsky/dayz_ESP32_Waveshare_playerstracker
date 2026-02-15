@@ -50,6 +50,12 @@ void screen_heatmap_init(heatmap_screen_widgets_t *widgets);
 void screen_heatmap_refresh(void);
 
 /**
+ * Schedule a deferred heatmap refresh via LVGL timer
+ * Shows "..." loading state immediately, calculates data after 50ms
+ */
+void screen_heatmap_schedule_refresh(void);
+
+/**
  * Calculate heatmap data from history
  * @param server_index Server to analyze
  * @param heatmap Output heatmap data

@@ -101,11 +101,11 @@ const char* map_format_name(const char *raw_map) {
 
 // ============== UI UPDATE FUNCTIONS ==============
 
-void ui_update_secondary(void) {
+// Private helper: update secondary boxes (call only while LVGL is locked)
+static void ui_update_secondary_unlocked(void) {
     app_state_t *state = app_state_get();
 
     if (!secondary_container) return;
-    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
 
     // Re-check secondary indices in case server list changed
     app_state_update_secondary_indices();
@@ -117,8 +117,8 @@ void ui_update_secondary(void) {
             server_config_t *srv = &state->settings.servers[srv_idx];
             secondary_server_status_t *status = &state->runtime.secondary[slot];
 
-            // Calculate trend
-            int trend = app_state_calculate_trend(slot);
+            // Get cached trend (O(1), no mutex)
+            int trend = app_state_get_cached_trend(slot);
 
             // Determine map to display - prefer stored config, fallback to API
             const char *map_to_show = "";
@@ -162,7 +162,12 @@ void ui_update_secondary(void) {
             }
         }
     }
+}
 
+void ui_update_secondary(void) {
+    if (!secondary_container) return;
+    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
+    ui_update_secondary_unlocked();
     lvgl_port_unlock();
 }
 
@@ -254,12 +259,9 @@ void ui_switch_screen(screen_id_t screen) {
 
 // ============== UPDATE UI ==============
 
-void ui_update_main(void) {
+// Private helper: update main screen (call only while LVGL is locked)
+static void ui_update_main_unlocked(void) {
     app_state_t *state = app_state_get();
-
-    if (app_state_get_current_screen() != SCREEN_MAIN) return;
-    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
-
     server_config_t *srv = app_state_get_active_server();
 
     // Server name
@@ -334,8 +336,8 @@ void ui_update_main(void) {
         // Use absolute player count for color (red from 50+)
         lv_obj_set_style_bg_color(bar_players, ui_get_player_color(state->runtime.current_players), LV_PART_INDICATOR);
 
-        // Main server trend (2h)
-        int trend = app_state_calculate_main_trend();
+        // Main server trend (2h) - cached, O(1)
+        int trend = app_state_get_cached_main_trend();
         int trend_count = app_state_get_main_trend_count();
         if (trend > 0) {
             char trend_buf[16];
@@ -430,12 +432,18 @@ void ui_update_main(void) {
         lv_label_set_text(lbl_cet_time, "--:-- CET");
     }
 
+}
+
+void ui_update_main(void) {
+    if (app_state_get_current_screen() != SCREEN_MAIN) return;
+    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
+    ui_update_main_unlocked();
     lvgl_port_unlock();
 }
 
-void ui_update_sd_status(void) {
+// Private helper: update SD status (call only while LVGL is locked)
+static void ui_update_sd_status_unlocked(void) {
     if (!lbl_sd_status) return;
-    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
 
     int usage = sd_card_get_usage_percent();
     char buf[16];
@@ -456,6 +464,20 @@ void ui_update_sd_status(void) {
             lv_obj_set_style_text_color(lbl_sd_status, COLOR_TEXT_MUTED, 0);
         }
     }
+}
 
+void ui_update_sd_status(void) {
+    if (!lbl_sd_status) return;
+    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
+    ui_update_sd_status_unlocked();
+    lvgl_port_unlock();
+}
+
+void ui_update_all(void) {
+    if (app_state_get_current_screen() != SCREEN_MAIN) return;
+    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS)) return;
+    ui_update_main_unlocked();
+    ui_update_secondary_unlocked();
+    ui_update_sd_status_unlocked();
     lvgl_port_unlock();
 }

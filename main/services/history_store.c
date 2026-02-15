@@ -17,17 +17,22 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <errno.h>
-#include <unistd.h>  // For fsync
 #include "nvs.h"
 #include "esp_log.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <unistd.h>
 
 static const char *TAG = "history_store";
 
 // Track if root history directory was created successfully
 static bool g_history_dir_created = false;
+
+// Cached file handle for JSON append (avoids open/close per entry)
+static FILE *s_json_file = NULL;
+static char s_json_file_path[80] = {0};
+static int s_json_write_count = 0;  // Entries since last flush
 
 // Use storage_paths module for path building - wrapper functions for compatibility
 static void build_history_file_path(int server_index, char *path, size_t path_size) {
@@ -182,6 +187,9 @@ void history_save_to_sd(int server_index) {
         ESP_LOGD(TAG, "Cannot save: SD not mounted or no history");
         return;
     }
+
+    // Flush cached JSON handle before binary write
+    history_flush_json();
 
     char file_path[64];
     build_history_file_path(server_index, file_path, sizeof(file_path));
@@ -386,6 +394,9 @@ void history_switch_server(int old_server_index, int new_server_index) {
 
     ESP_LOGI(TAG, "Switching history from server %d to server %d", old_server_index, new_server_index);
 
+    // Flush cached JSON file handle before switching
+    history_flush_json();
+
     // ALWAYS save current server's history to NVS first (most reliable)
     if (old_server_index >= 0 && state->history.count > 0) {
         ESP_LOGI(TAG, "Saving %d entries for server %d before switch", state->history.count, old_server_index);
@@ -589,6 +600,16 @@ esp_err_t history_init_json_dir(int server_index) {
     return ensure_directory(server_dir);
 }
 
+void history_flush_json(void) {
+    if (s_json_file) {
+        fflush(s_json_file);
+        fclose(s_json_file);
+        s_json_file = NULL;
+        s_json_file_path[0] = '\0';
+        s_json_write_count = 0;
+    }
+}
+
 esp_err_t history_append_entry_json(int server_index, uint32_t ts, int16_t players) {
     if (!sd_card_is_mounted()) {
         return ESP_ERR_INVALID_STATE;
@@ -600,9 +621,14 @@ esp_err_t history_append_entry_json(int server_index, uint32_t ts, int16_t playe
         return ESP_OK;
     }
 
-    // Build paths
+    // Ensure directories exist (only once)
+    if (!g_history_dir_created) {
+        mkdir(HISTORY_JSON_DIR, 0755);
+        g_history_dir_created = true;
+    }
     char server_dir[64];
     build_json_dir_path(server_index, server_dir, sizeof(server_dir));
+    mkdir(server_dir, 0755);
 
     char date_str[12];
     timestamp_to_date_str(ts, date_str, sizeof(date_str));
@@ -610,62 +636,52 @@ esp_err_t history_append_entry_json(int server_index, uint32_t ts, int16_t playe
     char file_path[80];
     build_json_file_path(server_index, date_str, file_path, sizeof(file_path));
 
-    // Create directories (ignore if exists)
-    mkdir(HISTORY_JSON_DIR, 0755);
-    mkdir(server_dir, 0755);
+    // Reopen if path changed (new day or different server)
+    if (strcmp(file_path, s_json_file_path) != 0) {
+        history_flush_json();  // close old handle
 
-    // Verify directories exist
-    struct stat st;
-    if (stat(HISTORY_JSON_DIR, &st) != 0 || stat(server_dir, &st) != 0) {
-        ESP_LOGE(TAG, "Failed to create history directories");
-        return ESP_FAIL;
-    }
+        bool file_exists = (access(file_path, F_OK) == 0);
+        s_json_file = fopen(file_path, "a");
+        if (!s_json_file) {
+            ESP_LOGE(TAG, "Failed to open: %s (errno=%d)", file_path, errno);
+            return ESP_FAIL;
+        }
+        strncpy(s_json_file_path, file_path, sizeof(s_json_file_path) - 1);
+        s_json_file_path[sizeof(s_json_file_path) - 1] = '\0';
 
-    // Check if file exists (need to write header if new)
-    bool file_exists = (stat(file_path, &st) == 0);
-
-    FILE *f = fopen(file_path, "a");
-    if (!f) {
-        ESP_LOGE(TAG, "Failed to open: %s (errno=%d)", file_path, errno);
-        return ESP_FAIL;
-    }
-
-    // Write header if new file
-    if (!file_exists) {
-        app_state_t *state = app_state_get();
-        server_config_t *server = &state->settings.servers[server_index];
-
-        fprintf(f, "{\"v\":%d,\"sid\":\"%s\",\"d\":\"%s\"}\n",
-                JSON_HISTORY_VERSION, server->server_id, date_str);
-        ESP_LOGI(TAG, "Created new JSON history file: %s", file_path);
+        if (!file_exists) {
+            app_state_t *state = app_state_get();
+            server_config_t *server = &state->settings.servers[server_index];
+            fprintf(s_json_file, "{\"v\":%d,\"sid\":\"%s\",\"d\":\"%s\"}\n",
+                    JSON_HISTORY_VERSION, server->server_id, date_str);
+            ESP_LOGI(TAG, "Created new JSON history file: %s", file_path);
+        }
     }
 
     // Append data entry (compact format)
-    int written = fprintf(f, "{\"t\":%lu,\"p\":%d}\n", (unsigned long)ts, (int)players);
+    int written = fprintf(s_json_file, "{\"t\":%lu,\"p\":%d}\n", (unsigned long)ts, (int)players);
     if (written <= 0) {
         ESP_LOGE(TAG, "fprintf FAILED! ret=%d errno=%d", written, errno);
-        fclose(f);
+        history_flush_json();
         return ESP_FAIL;
     }
 
-    // Force flush to disk
-    int flush_ret = fflush(f);
-    if (flush_ret != 0) {
-        ESP_LOGE(TAG, "fflush FAILED! ret=%d errno=%d", flush_ret, errno);
-        fclose(f);
-        return ESP_FAIL;
+    // Flush every 10 entries to balance safety vs performance
+    s_json_write_count++;
+    if (s_json_write_count >= 10) {
+        fflush(s_json_file);
+        s_json_write_count = 0;
     }
-
-    int sync_ret = fsync(fileno(f));
-    if (sync_ret != 0) {
-        ESP_LOGE(TAG, "fsync FAILED! ret=%d errno=%d", sync_ret, errno);
-        fclose(f);
-        return ESP_FAIL;
-    }
-
-    fclose(f);
 
     return ESP_OK;
+}
+
+static int history_entry_compare(const void *a, const void *b) {
+    uint32_t ta = ((const history_entry_t *)a)->timestamp;
+    uint32_t tb = ((const history_entry_t *)b)->timestamp;
+    if (ta < tb) return -1;
+    if (ta > tb) return 1;
+    return 0;
 }
 
 int history_load_range_json(int server_index, uint32_t start_time, uint32_t end_time,
@@ -698,43 +714,40 @@ int history_load_range_json(int server_index, uint32_t start_time, uint32_t end_
             continue;
         }
 
+        // Skip files outside date range by parsing filename
+        {
+            struct tm file_tm = {0};
+            if (sscanf(entry->d_name, "%d-%d-%d", &file_tm.tm_year, &file_tm.tm_mon, &file_tm.tm_mday) == 3) {
+                file_tm.tm_year -= 1900;
+                file_tm.tm_mon -= 1;
+                uint32_t file_day_start = (uint32_t)mktime(&file_tm);
+                uint32_t file_day_end = file_day_start + 86400;
+                if (file_day_end < start_time || file_day_start > end_time) {
+                    continue;
+                }
+            }
+        }
+
         snprintf(file_path, sizeof(file_path), "%s/%.16s", server_dir, entry->d_name);
 
         FILE *f = fopen(file_path, "r");
         if (!f) continue;
 
-        // Read line by line
+        // Read line by line - fast sscanf parsing (no malloc)
         while (fgets(line_buf, sizeof(line_buf), f) && loaded < max_entries) {
-            // Parse JSON line using cJSON
-            cJSON *json = cJSON_Parse(line_buf);
-            if (!json) {
-                continue;  // Skip invalid JSON lines
-            }
-
-            // Skip header lines (contain "sid")
-            cJSON *sid = cJSON_GetObjectItem(json, "sid");
-            if (sid) {
-                cJSON_Delete(json);
-                continue;
-            }
-
-            // Parse data line: {"t":timestamp,"p":players}
-            cJSON *ts_item = cJSON_GetObjectItem(json, "t");
-            cJSON *players_item = cJSON_GetObjectItem(json, "p");
-
-            if (ts_item && players_item && cJSON_IsNumber(ts_item) && cJSON_IsNumber(players_item)) {
-                uint32_t ts = (uint32_t)ts_item->valuedouble;
-                int16_t players = (int16_t)players_item->valueint;
-
-                // Filter by time range
+            unsigned long ts_val;
+            int p_val;
+            // Fast path: parse {"t":NUM,"p":NUM} directly
+            if (sscanf(line_buf, "{\"t\":%lu,\"p\":%d}", &ts_val, &p_val) == 2) {
+                uint32_t ts = (uint32_t)ts_val;
                 if (ts >= start_time && ts <= end_time) {
                     entries[loaded].timestamp = ts;
-                    entries[loaded].player_count = players;
+                    entries[loaded].player_count = (int16_t)p_val;
                     loaded++;
                 }
+                continue;
             }
-
-            cJSON_Delete(json);
+            // Header/invalid lines - skip silently
         }
 
         fclose(f);
@@ -742,16 +755,9 @@ int history_load_range_json(int server_index, uint32_t start_time, uint32_t end_
 
     closedir(dir);
 
-    // Sort entries by timestamp (oldest first) using simple bubble sort
-    // (should be mostly sorted already from files)
-    for (int i = 0; i < loaded - 1; i++) {
-        for (int j = 0; j < loaded - i - 1; j++) {
-            if (entries[j].timestamp > entries[j + 1].timestamp) {
-                history_entry_t temp = entries[j];
-                entries[j] = entries[j + 1];
-                entries[j + 1] = temp;
-            }
-        }
+    // Sort entries by timestamp (oldest first)
+    if (loaded > 1) {
+        qsort(entries, loaded, sizeof(history_entry_t), history_entry_compare);
     }
 
     ESP_LOGI(TAG, "Loaded %d JSON entries for server %d", loaded, server_index);

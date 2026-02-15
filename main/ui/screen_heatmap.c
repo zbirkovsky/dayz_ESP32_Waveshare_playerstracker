@@ -79,7 +79,8 @@ void heatmap_calculate(int server_index, heatmap_data_t *heatmap) {
     uint32_t start_time = end_time - (28 * 86400);  // 28 days back
 
     // Allocate buffer for history entries in PSRAM
-    int max_entries = 10000;
+    // 28 days of hourly JSON samples ~= 672, generous cap at 2000
+    int max_entries = 2000;
     history_entry_t *entries = heap_caps_malloc(
         max_entries * sizeof(history_entry_t),
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
@@ -241,6 +242,16 @@ void screen_heatmap_init(heatmap_screen_widgets_t *widgets) {
     lv_obj_align(widgets->lbl_cell_info, LV_ALIGN_BOTTOM_MID, 0, -15);
 
     ESP_LOGI(TAG, "Heatmap screen created (42 cells)");
+
+    // Set loading state for all cells
+    for (int d = 0; d < HEATMAP_DAYS; d++) {
+        for (int p = 0; p < HEATMAP_PERIODS; p++) {
+            if (widgets->cell_labels[d][p]) {
+                lv_label_set_text(widgets->cell_labels[d][p], "...");
+                lv_obj_center(widgets->cell_labels[d][p]);
+            }
+        }
+    }
 }
 
 void screen_heatmap_refresh(void) {
@@ -285,4 +296,13 @@ void screen_heatmap_refresh(void) {
     if (s_widgets->lbl_cell_info && s_widgets->data.valid) {
         lv_label_set_text(s_widgets->lbl_cell_info, "Tap a cell to see details (28 days data)");
     }
+}
+
+static void heatmap_deferred_refresh_cb(lv_timer_t *timer) {
+    screen_heatmap_refresh();
+    lv_timer_delete(timer);
+}
+
+void screen_heatmap_schedule_refresh(void) {
+    lv_timer_create(heatmap_deferred_refresh_cb, 50, NULL);
 }

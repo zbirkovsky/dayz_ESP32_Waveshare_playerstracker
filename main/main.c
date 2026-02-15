@@ -54,7 +54,7 @@
 #include "ui/screen_builder.h"
 #include "ui/ui_update.h"
 
-static const char *TAG = "main";
+static const char *TAG __attribute__((unused)) = "main";
 
 // ============== UI WIDGET ACCESS ==============
 #define screen_main (ui_context_get()->screen_main)
@@ -93,53 +93,25 @@ void app_main(void) {
     // Give LVGL task time to process before starting main loop
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    // Get state reference for main loop
-    app_state_t *state = app_state_get();
-
     // Initial UI update
-    ui_update_main();
-    ui_update_sd_status();
-    ui_update_secondary();
+    ui_update_all();
 
-    // Main loop
+    // Start background server query task
+    server_query_task_start();
+
+    // Main loop - blocks on event queue, wakes instantly on event or every 100ms for housekeeping
     while (1) {
-        // Yield to other tasks (especially LVGL) at start of each loop
-        vTaskDelay(pdMS_TO_TICKS(10));
+        // Block until event arrives or 100ms timeout (replaces vTaskDelay + polling)
+        event_handler_process_blocking(100);
 
-        // Process any pending events
-        event_handler_process();
-
-        // Always query server status for continuous data collection
-        // This ensures history/trends are recorded even during screensaver
-        server_query_execute();
-        vTaskDelay(pdMS_TO_TICKS(50));
-
-        // Only update UI when on main screen
-        if (app_state_get_current_screen() == SCREEN_MAIN) {
-            ui_update_main();
-            ui_update_secondary();
-            ui_update_sd_status();
+        // If server switch triggered deferred I/O, yield to let LVGL render first
+        if (event_handler_has_deferred()) {
+            vTaskDelay(pdMS_TO_TICKS(20));  // Let LVGL render the updated frame
+            event_handler_process_deferred();
         }
 
-        // Wait for refresh interval
-        int wait_cycles = (state->settings.refresh_interval_sec * 1000) / 100;
-        for (int i = 0; i < wait_cycles; i++) {
-            // Process events during wait
-            event_handler_process();
-
-            // Check for manual refresh
-            if (app_state_consume_refresh_request()) {
-                ESP_LOGI(TAG, "Manual refresh triggered");
-                break;
-            }
-
-            // Auto-hide alerts
-            alert_check_auto_hide();
-
-            // Screensaver and touch handling
-            screensaver_tick();
-
-            vTaskDelay(pdMS_TO_TICKS(100));
-        }
+        // Periodic housekeeping (~10Hz when idle, immediate after events)
+        alert_check_auto_hide();
+        screensaver_tick();
     }
 }

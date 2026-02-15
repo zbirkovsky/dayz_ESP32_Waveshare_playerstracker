@@ -260,9 +260,6 @@ esp_err_t settings_save(void) {
 
     ESP_LOGI(TAG, "Settings saved to NVS");
 
-    // Also export to JSON on SD card (async, ignore errors)
-    settings_export_to_json();
-
     return ESP_OK;
 }
 
